@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { safePublicFetch } from "@/lib/server-fetch"
+import { DEFAULT_BROWSER_UA, safePublicFetch } from "@/lib/server-fetch"
 import { validatePublicUrl } from "@/lib/url-utils"
 
 const ALLOWED_IMAGE_TYPES = new Set([
@@ -46,6 +46,62 @@ function setCachedImage(key: string, buffer: ArrayBuffer, contentType: string) {
   })
 }
 
+function sniffRasterContentType(bytes: Uint8Array): string | null {
+  if (bytes.length < 4) return null
+
+  // PNG: 89 50 4E 47
+  if (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return "image/png"
+  }
+
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg"
+  }
+
+  // GIF: 47 49 46 38
+  if (
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
+    return "image/gif"
+  }
+
+  // WebP: RIFF....WEBP
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return "image/webp"
+  }
+
+  // ICO: 00 00 01 00
+  if (
+    bytes[0] === 0x00 &&
+    bytes[1] === 0x00 &&
+    bytes[2] === 0x01 &&
+    bytes[3] === 0x00
+  ) {
+    return "image/x-icon"
+  }
+
+  return null
+}
+
 export async function GET(request: NextRequest) {
   const target = request.nextUrl.searchParams.get("url")
   if (!target) {
@@ -72,10 +128,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const { response } = await safePublicFetch(cacheKey, {
-      timeoutMs: 6500,
+      timeoutMs: 9000,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; PrettyLinkBot/1.0; +https://prettylink.app)",
+        "User-Agent": DEFAULT_BROWSER_UA,
         Accept: "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8",
       },
     })
@@ -84,18 +139,6 @@ export async function GET(request: NextRequest) {
       return Response.json(
         { error: `Upstream returned status ${response.status}.` },
         { status: 502 }
-      )
-    }
-
-    const rawContentType = (response.headers.get("content-type") ?? "")
-      .split(";")[0]!
-      .trim()
-      .toLowerCase()
-
-    if (!ALLOWED_IMAGE_TYPES.has(rawContentType)) {
-      return Response.json(
-        { error: "Upstream response is not a supported raster image." },
-        { status: 415 }
       )
     }
 
@@ -115,12 +158,28 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    setCachedImage(cacheKey, arrayBuffer, rawContentType)
+    const rawContentType = (response.headers.get("content-type") ?? "")
+      .split(";")[0]!
+      .trim()
+      .toLowerCase()
+
+    const finalContentType = ALLOWED_IMAGE_TYPES.has(rawContentType)
+      ? rawContentType
+      : sniffRasterContentType(new Uint8Array(arrayBuffer))
+
+    if (!finalContentType) {
+      return Response.json(
+        { error: "Upstream response is not a supported raster image." },
+        { status: 415 }
+      )
+    }
+
+    setCachedImage(cacheKey, arrayBuffer, finalContentType)
 
     return new Response(arrayBuffer, {
       status: 200,
       headers: {
-        "Content-Type": rawContentType,
+        "Content-Type": finalContentType,
         "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
         "X-Content-Type-Options": "nosniff",
       },

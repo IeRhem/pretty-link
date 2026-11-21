@@ -12,6 +12,15 @@ const PREVIEW_CACHE_TTL_MS = 10 * 60 * 1000
 const PREVIEW_CACHE_MAX = 100
 const previewCache = new Map<string, { data: LinkMetadata; expiresAt: number }>()
 
+interface SocialEnrichment {
+  title: string | null
+  handle: string | null
+  description: string | null
+  avatarUrl: string | null
+  coverUrl: string | null
+  metrics: string | null
+}
+
 function getCachedPreview(key: string): LinkMetadata | null {
   const entry = previewCache.get(key)
   if (!entry) return null
@@ -28,6 +37,31 @@ function setCachedPreview(key: string, data: LinkMetadata) {
     if (oldestKey !== undefined) previewCache.delete(oldestKey)
   }
   previewCache.set(key, { data, expiresAt: Date.now() + PREVIEW_CACHE_TTL_MS })
+}
+
+function formatCompactCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0"
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`
+  }
+  if (n >= 1_000) {
+    return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`
+  }
+  return String(Math.round(n))
+}
+
+function extractMetricsFromDescription(desc: string): string | null {
+  if (!desc) return null
+  const matches = Array.from(
+    desc.matchAll(
+      /(\d+(?:[.,]\d+)?[KMB]?)\s+(Followers|Following|Posts|Subscribers|Videos|Shots|Likes)/gi
+    )
+  )
+  if (matches.length === 0) return null
+  return matches
+    .slice(0, 3)
+    .map((m) => `${m[1]} ${m[2]!.charAt(0).toUpperCase()}${m[2]!.slice(1).toLowerCase()}`)
+    .join(" · ")
 }
 
 function decodeHtmlEntities(str: string): string {
@@ -131,7 +165,147 @@ function parseHtmlMeta(html: string, baseUrl: URL) {
   }
 }
 
-async function fetchGitHubEnrichment(url: URL) {
+const RESERVED_X_PATHS = new Set([
+  "home",
+  "explore",
+  "search",
+  "notifications",
+  "messages",
+  "settings",
+  "i",
+])
+
+async function fetchXEnrichment(url: URL): Promise<SocialEnrichment | null> {
+  const segments = url.pathname
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const username = (segments[0] ?? "").replace(/^@/, "")
+  if (!username || RESERVED_X_PATHS.has(username.toLowerCase())) {
+    return null
+  }
+
+  try {
+    const { response: res } = await safePublicFetch(
+      `https://api.fxtwitter.com/${encodeURIComponent(username)}`,
+      {
+        timeoutMs: 8000,
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "PrettyLink/1.0",
+        },
+      }
+    )
+    if (res.ok) {
+      const json = (await res.json()) as {
+        user?: {
+          name?: string
+          screen_name?: string
+          description?: string
+          avatar_url?: string
+          banner_url?: string
+          followers?: number
+          following?: number
+          tweets?: number
+        }
+      }
+      if (json.user) {
+        const u = json.user
+        const avatarUrl = u.avatar_url
+          ? u.avatar_url.replace("_normal.", "_400x400.")
+          : null
+        const metrics =
+          typeof u.followers === "number" || typeof u.tweets === "number"
+            ? `${formatCompactCount(u.tweets ?? 0)} Posts · ${formatCompactCount(u.followers ?? 0)} Followers · ${formatCompactCount(u.following ?? 0)} Following`
+            : null
+        return {
+          title: u.name || username,
+          handle: `@${u.screen_name || username}`,
+          description: u.description ?? "",
+          avatarUrl,
+          coverUrl: u.banner_url || null,
+          metrics,
+        }
+      }
+    }
+  } catch {
+    // Fall through to syndication widget fallback
+  }
+
+  try {
+    const { response: res } = await safePublicFetch(
+      `https://cdn.syndication.twimg.com/widgets/followbutton/info.json?screen_names=${encodeURIComponent(username)}`,
+      {
+        timeoutMs: 5000,
+        headers: { Accept: "application/json", "User-Agent": "PrettyLink/1.0" },
+      }
+    )
+    if (!res.ok) return null
+    const arr = (await res.json()) as Array<{
+      name?: string
+      screen_name?: string
+      followers_count?: number
+    }>
+    const entry = Array.isArray(arr) ? arr[0] : null
+    if (!entry) return null
+    return {
+      title: entry.name || username,
+      handle: `@${entry.screen_name || username}`,
+      description: null,
+      avatarUrl: null,
+      coverUrl: null,
+      metrics:
+        typeof entry.followers_count === "number"
+          ? `${formatCompactCount(entry.followers_count)} Followers`
+          : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function fetchBlueskyEnrichment(url: URL): Promise<SocialEnrichment | null> {
+  const segments = url.pathname
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const rawActor = segments[0] === "profile" ? segments[1] : segments[0]
+  const actor = (rawActor ?? "").replace(/^@/, "")
+  if (!actor) return null
+
+  try {
+    const { response: res } = await safePublicFetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(actor)}`,
+      {
+        timeoutMs: 6000,
+        headers: { Accept: "application/json", "User-Agent": "PrettyLink/1.0" },
+      }
+    )
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      displayName?: string
+      handle?: string
+      description?: string
+      avatar?: string
+      banner?: string
+      postsCount?: number
+      followersCount?: number
+      followsCount?: number
+    }
+    return {
+      title: data.displayName || data.handle || actor,
+      handle: `@${data.handle || actor}`,
+      description: data.description ?? "",
+      avatarUrl: data.avatar || null,
+      coverUrl: data.banner || null,
+      metrics: `${formatCompactCount(data.postsCount ?? 0)} Posts · ${formatCompactCount(data.followersCount ?? 0)} Followers · ${formatCompactCount(data.followsCount ?? 0)} Following`,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function fetchGitHubEnrichment(url: URL): Promise<SocialEnrichment | null> {
   const segments = url.pathname
     .split("/")
     .map((s) => s.trim())
@@ -146,65 +320,59 @@ async function fetchGitHubEnrichment(url: URL) {
 
   try {
     if (segments.length === 1) {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 2200)
-      try {
-        const res = await fetch(
-          `https://api.github.com/users/${encodeURIComponent(segments[0]!)}`,
-          { headers, signal: controller.signal }
-        )
-        if (!res.ok) return null
-        const data = (await res.json()) as {
-          name?: string
-          login?: string
-          bio?: string
-          avatar_url?: string
-          followers?: number
-          public_repos?: number
-        }
-        return {
-          title: data.name || data.login || segments[0]!,
-          description: data.bio || "",
-          avatarUrl: data.avatar_url || null,
-          metrics:
-            typeof data.followers === "number"
-              ? `${data.followers.toLocaleString()} Followers · ${data.public_repos ?? 0} Repos`
-              : null,
-          ogImageUrl: null,
-        }
-      } finally {
-        clearTimeout(timer)
-      }
-    }
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 2200)
-    try {
-      const res = await fetch(
-        `https://api.github.com/repos/${encodeURIComponent(segments[0]!)}/${encodeURIComponent(segments[1]!)}`,
-        { headers, signal: controller.signal }
+      const { response: res } = await safePublicFetch(
+        `https://api.github.com/users/${encodeURIComponent(segments[0]!)}`,
+        { timeoutMs: 6000, headers }
       )
       if (!res.ok) return null
       const data = (await res.json()) as {
-        full_name?: string
         name?: string
-        description?: string
-        stargazers_count?: number
-        forks_count?: number
-        owner?: { avatar_url?: string }
+        login?: string
+        bio?: string
+        avatar_url?: string
+        followers?: number
+        following?: number
+        public_repos?: number
       }
       return {
-        title: data.full_name || data.name || `${segments[0]}/${segments[1]}`,
-        description: data.description || "",
-        avatarUrl: data.owner?.avatar_url || null,
+        title: data.name || data.login || segments[0]!,
+        handle: `@${data.login || segments[0]!}`,
+        description: data.bio ?? "",
+        avatarUrl: data.avatar_url || null,
+        coverUrl: null,
         metrics:
-          typeof data.stargazers_count === "number"
-            ? `${data.stargazers_count.toLocaleString()} Stars · ${(data.forks_count ?? 0).toLocaleString()} Forks`
+          typeof data.followers === "number"
+            ? `${formatCompactCount(data.public_repos ?? 0)} Repos · ${formatCompactCount(data.followers)} Followers · ${formatCompactCount(data.following ?? 0)} Following`
             : null,
-        ogImageUrl: `https://opengraph.githubassets.com/1/${segments[0]}/${segments[1]}`,
       }
-    } finally {
-      clearTimeout(timer)
+    }
+
+    const { response: res } = await safePublicFetch(
+      `https://api.github.com/repos/${encodeURIComponent(segments[0]!)}/${encodeURIComponent(segments[1]!)}`,
+      { timeoutMs: 6000, headers }
+    )
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      full_name?: string
+      name?: string
+      description?: string
+      stargazers_count?: number
+      forks_count?: number
+      subscribers_count?: number
+      watchers_count?: number
+      owner?: { avatar_url?: string }
+    }
+    const watchers = data.subscribers_count ?? data.watchers_count ?? 0
+    return {
+      title: data.full_name || data.name || `${segments[0]}/${segments[1]}`,
+      handle: `${segments[0]}/${segments[1]}`,
+      description: data.description ?? "",
+      avatarUrl: data.owner?.avatar_url || null,
+      coverUrl: `https://opengraph.githubassets.com/1/${segments[0]}/${segments[1]}`,
+      metrics:
+        typeof data.stargazers_count === "number"
+          ? `${formatCompactCount(data.stargazers_count)} Stars · ${formatCompactCount(data.forks_count ?? 0)} Forks · ${formatCompactCount(watchers)} Watchers`
+          : null,
     }
   } catch {
     return null
@@ -224,7 +392,7 @@ export async function GET(request: NextRequest) {
 
   const targetUrl = check.url
   const cacheKey = targetUrl.toString()
-  const cacheEntryKey = `v2:${cacheKey}`
+  const cacheEntryKey = `v6:${cacheKey}`
   const cached = getCachedPreview(cacheEntryKey)
   if (cached) {
     return Response.json(cached, {
@@ -240,7 +408,7 @@ export async function GET(request: NextRequest) {
   const htmlMetaPromise = (async () => {
     try {
       const { response, finalUrl } = await safePublicFetch(cacheKey, {
-        timeoutMs: 2500,
+        timeoutMs: 6000,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (compatible; PrettyLinkBot/1.0; +https://prettylink.app)",
@@ -259,21 +427,39 @@ export async function GET(request: NextRequest) {
     }
   })()
 
-  const githubPromise =
-    detected.platform === "github"
-      ? fetchGitHubEnrichment(targetUrl)
-      : Promise.resolve(null)
+  const socialMetaPromise: Promise<SocialEnrichment | null> =
+    detected.platform === "x"
+      ? fetchXEnrichment(targetUrl)
+      : detected.platform === "bluesky"
+        ? fetchBlueskyEnrichment(targetUrl)
+        : detected.platform === "github"
+          ? fetchGitHubEnrichment(targetUrl)
+          : Promise.resolve(null)
 
-  const [htmlMeta, ghMeta] = await Promise.all([
+  const [htmlMeta, socialMeta] = await Promise.all([
     htmlMetaPromise,
-    githubPromise,
+    socialMetaPromise,
   ])
 
   const screenshotUrl = `/api/screenshot?url=${encodeURIComponent(cacheKey)}`
 
-  const rawOgImage = ghMeta?.ogImageUrl || htmlMeta?.ogImageUrl || null
-  const rawAvatar = ghMeta?.avatarUrl || htmlMeta?.ogImageUrl || null
+  const rawOgImage = htmlMeta?.ogImageUrl || null
+  const rawAvatar =
+    socialMeta?.avatarUrl ||
+    (detected.platform !== "custom" ? htmlMeta?.ogImageUrl : null) ||
+    null
+  const rawCover = socialMeta?.coverUrl || null
   const rawFavicon = htmlMeta?.faviconUrl || `${targetUrl.origin}/favicon.ico`
+
+  const description =
+    socialMeta?.description !== null && socialMeta?.description !== undefined
+      ? socialMeta.description
+      : htmlMeta?.description ?? ""
+
+  const metrics =
+    socialMeta?.metrics ??
+    extractMetricsFromDescription(htmlMeta?.description ?? "") ??
+    null
 
   const metadata: LinkMetadata = {
     requestedUrl: rawUrl,
@@ -281,22 +467,20 @@ export async function GET(request: NextRequest) {
     displayUrl: formatDisplayUrl(cacheKey),
     domain: targetUrl.hostname.replace(/^www\./, ""),
     title:
-      ghMeta?.title ||
+      socialMeta?.title ||
       htmlMeta?.title ||
       detected.displayName,
-    description:
-      ghMeta?.description ||
-      htmlMeta?.description ||
-      `Explore ${formatDisplayUrl(cacheKey)} in a clean shareable frame.`,
+    description,
     siteName: htmlMeta?.siteName || targetUrl.hostname.replace(/^www\./, ""),
     faviconUrl: toImageProxyUrl(rawFavicon),
     ogImageUrl: toImageProxyUrl(rawOgImage),
     screenshotUrl,
     avatarUrl: toImageProxyUrl(rawAvatar),
+    coverUrl: toImageProxyUrl(rawCover),
     themeColor: htmlMeta?.themeColor ?? null,
     detectedPlatform: detected.platform,
-    handle: detected.handle,
-    metrics: ghMeta?.metrics ?? null,
+    handle: socialMeta?.handle ?? detected.handle,
+    metrics,
     fetchedAt: new Date().toISOString(),
   }
 

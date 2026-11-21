@@ -8,7 +8,7 @@ export default function Home() {
       fallback={
         <div className="flex min-h-screen gap-4 bg-background p-4">
           <Skeleton className="hidden h-full w-[320px] rounded-2xl md:block" />
-          <Skeleton className="h-[600px] flex-1 rounded-2xl md:h-full" />
+          <Skeleton className="h-150 flex-1 rounded-2xl md:h-full" />
         </div>
       }
     >

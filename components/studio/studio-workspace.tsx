@@ -103,10 +103,11 @@ export function StudioWorkspace() {
           socialPlatform: data.detectedPlatform,
           socialDisplayName: data.title || prev.socialDisplayName,
           socialHandle: data.handle || prev.socialHandle,
-          socialBio: data.description || prev.socialBio,
-          socialMetrics: data.metrics || prev.socialMetrics,
+          socialBio: data.description ?? "",
+          socialMetrics: data.metrics ?? "",
           socialCtaLabel: platformConfig.defaultCta,
-          socialAvatarUrl: data.avatarUrl || prev.socialAvatarUrl,
+          socialAvatarUrl: data.avatarUrl ?? "",
+          socialCoverUrl: data.coverUrl ?? "",
         }))
         notify(`Loaded preview for ${data.displayUrl}`)
       } catch (err) {

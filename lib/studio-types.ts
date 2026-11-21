@@ -69,6 +69,7 @@ export interface LinkMetadata {
   ogImageUrl: string | null
   screenshotUrl: string | null
   avatarUrl: string | null
+  coverUrl: string | null
   themeColor: string | null
   detectedPlatform: SocialPlatformId
   handle: string | null
@@ -169,7 +170,7 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   socialHandle: "@Oliviar_",
   socialBio:
     "Product designer & creative developer sharing interface systems, motion studies, and web tools.",
-  socialMetrics: "4.9 Rating · 125 Posts · 12.4K Followers",
+  socialMetrics: "125 Posts · 12.4K Followers · 340 Following",
   socialCtaLabel: "Get in Touch",
   socialAvatarUrl: "",
   socialCoverUrl: "",

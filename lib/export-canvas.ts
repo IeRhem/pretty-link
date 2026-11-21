@@ -49,18 +49,15 @@ function roundedRectPath(
   ctx.closePath()
 }
 
-async function loadImageSafe(src: string | null | undefined): Promise<HTMLImageElement | null> {
-  if (!src) return null
-  const safeSrc =
-    src.startsWith("data:") || src.startsWith("blob:") || src.startsWith("/")
-      ? src
-      : toImageProxyUrl(src)
-  if (!safeSrc) return null
-
+function tryLoadHtmlImage(
+  src: string,
+  options: { crossOrigin?: string; referrerPolicy?: string; timeoutMs?: number } = {}
+): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image()
-    img.crossOrigin = "anonymous"
-    const timer = setTimeout(() => resolve(null), 12_000)
+    if (options.crossOrigin) img.crossOrigin = options.crossOrigin
+    if (options.referrerPolicy) img.referrerPolicy = options.referrerPolicy
+    const timer = setTimeout(() => resolve(null), options.timeoutMs ?? 10_000)
     img.onload = () => {
       clearTimeout(timer)
       resolve(img)
@@ -69,8 +66,34 @@ async function loadImageSafe(src: string | null | undefined): Promise<HTMLImageE
       clearTimeout(timer)
       resolve(null)
     }
-    img.src = safeSrc
+    img.src = src
   })
+}
+
+async function loadImageSafe(src: string | null | undefined): Promise<HTMLImageElement | null> {
+  if (!src) return null
+  if (src.startsWith("data:") || src.startsWith("blob:") || src.startsWith("/")) {
+    return tryLoadHtmlImage(src, { crossOrigin: "anonymous", timeoutMs: 12_000 })
+  }
+
+  const proxied = toImageProxyUrl(src)
+  if (proxied) {
+    const viaProxy = await tryLoadHtmlImage(proxied, {
+      crossOrigin: "anonymous",
+      timeoutMs: 10_000,
+    })
+    if (viaProxy) return viaProxy
+  }
+
+  if (/^https?:\/\//i.test(src)) {
+    return tryLoadHtmlImage(src, {
+      crossOrigin: "anonymous",
+      referrerPolicy: "no-referrer",
+      timeoutMs: 8_000,
+    })
+  }
+
+  return null
 }
 
 function drawCoverImage(
@@ -739,11 +762,7 @@ async function drawSocialMode(
   ctx.clip()
 
   const avatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || null
-  const coverSrc =
-    state.socialCoverUrl ||
-    state.metadata?.ogImageUrl ||
-    state.metadata?.screenshotUrl ||
-    null
+  const coverSrc = state.socialCoverUrl || state.metadata?.coverUrl || null
 
   const [avatarImg, coverImg] = await Promise.all([
     loadImageSafe(avatarSrc),
@@ -928,86 +947,13 @@ async function drawSocialMode(
     }
     ctx.restore()
 
-    // Name, Handle + Follow & Bookmark
+    // Name & Handle
     const innerPadX = cx + pad + Math.round((isFullCover ? 0 : 6) * scaleFactor)
     const innerW = cardW - pad * 2 - Math.round((isFullCover ? 0 : 12) * scaleFactor)
     const rowY = avY + avSize + Math.round(12 * scaleFactor)
 
-    const bmSize = Math.round(28 * scaleFactor)
-    const followW = Math.round(66 * scaleFactor)
-    const followH = Math.round(28 * scaleFactor)
-    const rightGap = Math.round(6 * scaleFactor)
-    const bmX = innerPadX + innerW - bmSize
-    const followX = bmX - rightGap - followW
-
-    // Follow pill
-    roundedRectPath(ctx, followX, rowY + 4 * scaleFactor, followW, followH, 999)
-    ctx.fillStyle = isFullCover
-      ? "rgba(255,255,255,0.16)"
-      : isLightSurface
-        ? "#09090B"
-        : "#FFFFFF"
-    ctx.fill()
-    if (isFullCover) {
-      ctx.lineWidth = Math.max(1, scaleFactor)
-      ctx.strokeStyle = "rgba(255,255,255,0.75)"
-      ctx.stroke()
-    }
-    ctx.font = `500 ${Math.round(11.5 * scaleFactor)}px "DM Sans", sans-serif`
-    ctx.fillStyle = isFullCover
-      ? "#FFFFFF"
-      : isLightSurface
-        ? "#FFFFFF"
-        : "#09090B"
-    ctx.textAlign = "center"
-    ctx.textBaseline = "middle"
-    ctx.fillText(
-      "Follow",
-      followX + followW / 2,
-      rowY + 4 * scaleFactor + followH / 2 + 0.5
-    )
-
-    // Bookmark circle
-    ctx.beginPath()
-    ctx.arc(
-      bmX + bmSize / 2,
-      rowY + 4 * scaleFactor + bmSize / 2,
-      bmSize / 2,
-      0,
-      Math.PI * 2
-    )
-    ctx.fillStyle = isFullCover ? "rgba(255,255,255,0.16)" : "transparent"
-    ctx.fill()
-    ctx.lineWidth = Math.max(1, scaleFactor)
-    ctx.strokeStyle = isFullCover
-      ? "rgba(255,255,255,0.75)"
-      : isLightSurface
-        ? "#E4E4E7"
-        : "rgba(255,255,255,0.22)"
-    ctx.stroke()
-
-    // Small bookmark glyph inside circle
-    const bmx = bmX + bmSize / 2
-    const bmy = rowY + 4 * scaleFactor + bmSize / 2
-    const bms = 4.2 * scaleFactor
-    ctx.beginPath()
-    ctx.moveTo(bmx - bms * 0.85, bmy - bms * 1.1)
-    ctx.lineTo(bmx + bms * 0.85, bmy - bms * 1.1)
-    ctx.lineTo(bmx + bms * 0.85, bmy + bms * 1.1)
-    ctx.lineTo(bmx, bmy + bms * 0.45)
-    ctx.lineTo(bmx - bms * 0.85, bmy + bms * 1.1)
-    ctx.closePath()
-    if (isFullCover) {
-      ctx.fillStyle = "#FFFFFF"
-      ctx.fill()
-    } else {
-      ctx.strokeStyle = isLightSurface ? "#27272A" : "#E4E4E7"
-      ctx.stroke()
-    }
-    ctx.textAlign = "left"
-
     // Display name & handle
-    const textMaxW = Math.max(80, followX - innerPadX - 10 * scaleFactor)
+    const textMaxW = Math.max(80, innerW)
     ctx.textBaseline = "top"
     ctx.font = `700 ${Math.round(17 * scaleFactor)}px "Instrument Sans", sans-serif`
     ctx.fillStyle = fg
@@ -1036,36 +982,38 @@ async function drawSocialMode(
     })
 
     const afterDescY =
-      descY + Math.max(1, descLines.length) * Math.round(17 * scaleFactor)
+      descY + Math.max(0, descLines.length) * Math.round(17 * scaleFactor)
 
-    if (!isFullCover) {
-      const divY = afterDescY + Math.round(10 * scaleFactor)
-      ctx.fillStyle = isLightSurface
-        ? "rgba(228, 228, 231, 0.9)"
-        : "rgba(255, 255, 255, 0.10)"
-      ctx.fillRect(innerPadX, divY, innerW, 1)
-    }
-
-    // 3-Column Stats Row
     const ctaH = Math.round(44 * scaleFactor)
     const ctaY = cy + cardH - pad - ctaH
-    const statsY = ctaY - Math.round(48 * scaleFactor)
     const stats = parseSocialStats(state.socialMetrics)
-    const colW = innerW / 3
 
-    ctx.textAlign = "center"
-    ctx.textBaseline = "top"
-    stats.forEach((stat, idx) => {
-      const colCx = innerPadX + colW * idx + colW / 2
-      ctx.font = `700 ${Math.round(15 * scaleFactor)}px "Instrument Sans", sans-serif`
-      ctx.fillStyle = fg
-      ctx.fillText(stat.value, colCx, statsY, colW - 8)
+    if (stats.length > 0) {
+      if (!isFullCover) {
+        const divY = afterDescY + Math.round(10 * scaleFactor)
+        ctx.fillStyle = isLightSurface
+          ? "rgba(228, 228, 231, 0.9)"
+          : "rgba(255, 255, 255, 0.10)"
+        ctx.fillRect(innerPadX, divY, innerW, 1)
+      }
 
-      ctx.font = `500 ${Math.round(11 * scaleFactor)}px "DM Sans", sans-serif`
-      ctx.fillStyle = mutedFg
-      ctx.fillText(stat.label, colCx, statsY + Math.round(19 * scaleFactor), colW - 8)
-    })
-    ctx.textAlign = "left"
+      const statsY = ctaY - Math.round(48 * scaleFactor)
+      const colW = innerW / stats.length
+
+      ctx.textAlign = "center"
+      ctx.textBaseline = "top"
+      stats.forEach((stat, idx) => {
+        const colCx = innerPadX + colW * idx + colW / 2
+        ctx.font = `700 ${Math.round(15 * scaleFactor)}px "Instrument Sans", sans-serif`
+        ctx.fillStyle = fg
+        ctx.fillText(stat.value, colCx, statsY, colW - 8)
+
+        ctx.font = `500 ${Math.round(11 * scaleFactor)}px "DM Sans", sans-serif`
+        ctx.fillStyle = mutedFg
+        ctx.fillText(stat.label, colCx, statsY + Math.round(19 * scaleFactor), colW - 8)
+      })
+      ctx.textAlign = "left"
+    }
 
     // Full-Width Bottom Pill CTA Bar
     const ctaX = cx + pad

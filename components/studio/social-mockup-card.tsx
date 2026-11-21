@@ -4,8 +4,6 @@ import * as React from "react"
 import {
   IconArrowRight,
   IconArrowUpRight,
-  IconBookmark,
-  IconBookmarkFilled,
   IconNotes,
   IconRosetteDiscountCheckFilled,
   IconStarFilled,
@@ -15,29 +13,25 @@ import { QrCodeSvg } from "@/components/studio/qr-code-svg"
 import { SocialPlatformIcon } from "@/components/studio/social-platform-icon"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import type { StudioState } from "@/lib/studio-types"
-import { formatDisplayUrl, normalizeUrl } from "@/lib/url-utils"
+import { formatDisplayUrl, normalizeUrl, toImageProxyUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
-
-const DEFAULT_STATS: Array<{ value: string; label: string }> = [
-  { value: "4.9", label: "Rating" },
-  { value: "125", label: "Posts" },
-  { value: "12.4K", label: "Followers" },
-]
 
 export function parseSocialStats(
   metrics: string
 ): Array<{ value: string; label: string }> {
+  if (!metrics || !metrics.trim()) return []
+
   const parts = metrics
     .split(/[·|,]/)
     .map((s) => s.trim())
     .filter(Boolean)
 
-  const parsed = parts.slice(0, 3).map((part, idx) => {
+  return parts.slice(0, 3).map((part) => {
     const tokens = part.split(/\s+/).filter(Boolean)
     if (tokens.length === 1) {
       return {
         value: tokens[0]!,
-        label: DEFAULT_STATS[idx]?.label ?? "Metric",
+        label: "Metric",
       }
     }
     return {
@@ -45,20 +39,30 @@ export function parseSocialStats(
       label: tokens.slice(1).join(" "),
     }
   })
+}
 
-  while (parsed.length < 3) {
-    parsed.push(DEFAULT_STATS[parsed.length]!)
+function getStatIcon(label: string) {
+  const lower = label.toLowerCase()
+  if (lower.includes("star") || lower.includes("rating")) {
+    return IconStarFilled
   }
-
-  return parsed
+  if (
+    lower.includes("post") ||
+    lower.includes("tweet") ||
+    lower.includes("repo") ||
+    lower.includes("fork") ||
+    lower.includes("shot") ||
+    lower.includes("video")
+  ) {
+    return IconNotes
+  }
+  return IconUserFilled
 }
 
 const FALLBACK_COVER_STYLE: React.CSSProperties = {
   backgroundImage:
     "radial-gradient(at 18% 22%, #a7f3d0 0%, transparent 52%), radial-gradient(at 82% 74%, #065f46 0%, transparent 58%), linear-gradient(135deg, #047857 0%, #22c55e 48%, #0f766e 100%)",
 }
-
-const STAT_ICONS = [IconStarFilled, IconNotes, IconUserFilled] as const
 
 export function SocialMockupCard({
   state,
@@ -69,22 +73,34 @@ export function SocialMockupCard({
   logicalWidth: number
   logicalHeight: number
 }) {
-  const [failedAvatarSrc, setFailedAvatarSrc] = React.useState<string | null>(null)
-  const [failedCoverSrc, setFailedCoverSrc] = React.useState<string | null>(null)
+  const [failedUrls, setFailedUrls] = React.useState<string[]>([])
   const platform = SOCIAL_PLATFORMS[state.socialPlatform] ?? SOCIAL_PLATFORMS.custom
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const userScale = state.frameScale / 100
 
-  const avatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || ""
-  const avatarFailed = Boolean(avatarSrc) && failedAvatarSrc === avatarSrc
+  const markFailed = (src: string) => {
+    setFailedUrls((prev) => (prev.includes(src) ? prev : [...prev, src]))
+  }
 
-  const coverSrc =
-    state.socialCoverUrl ||
-    state.metadata?.ogImageUrl ||
-    state.metadata?.screenshotUrl ||
-    ""
-  const coverFailed = Boolean(coverSrc) && failedCoverSrc === coverSrc
+  const resolveImageWithProxyFallback = (rawSrc: string): string => {
+    if (!rawSrc) return ""
+    if (!failedUrls.includes(rawSrc)) return rawSrc
+    if (rawSrc.startsWith("/api/image-proxy?")) {
+      const direct = new URLSearchParams(rawSrc.split("?")[1] ?? "").get("url")
+      if (direct && !failedUrls.includes(direct)) return direct
+    } else if (/^https?:\/\//i.test(rawSrc)) {
+      const proxied = toImageProxyUrl(rawSrc)
+      if (proxied && !failedUrls.includes(proxied)) return proxied
+    }
+    return ""
+  }
+
+  const rawAvatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || ""
+  const avatarSrc = resolveImageWithProxyFallback(rawAvatarSrc)
+
+  const rawCoverSrc = state.socialCoverUrl || state.metadata?.coverUrl || ""
+  const coverSrc = resolveImageWithProxyFallback(rawCoverSrc)
 
   const isDarkSurface =
     state.socialCardTheme === "dark" ||
@@ -111,15 +127,16 @@ export function SocialMockupCard({
         ringClass
       )}
       style={{
-        background: avatarSrc && !avatarFailed ? "#FEFCE8" : platform.accentGradient,
+        background: avatarSrc ? "#FEFCE8" : platform.accentGradient,
       }}
     >
-      {avatarSrc && !avatarFailed ? (
+      {avatarSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={avatarSrc}
           alt={state.socialDisplayName}
-          onError={() => setFailedAvatarSrc(avatarSrc)}
+          referrerPolicy="no-referrer"
+          onError={() => markFailed(avatarSrc)}
           className="size-full object-cover"
         />
       ) : (
@@ -130,16 +147,20 @@ export function SocialMockupCard({
 
   const renderCoverBackdrop = (className?: string) => (
     <>
-      {coverSrc && !coverFailed ? (
+      {coverSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={coverSrc}
           alt="Account cover"
-          onError={() => setFailedCoverSrc(coverSrc)}
+          referrerPolicy="no-referrer"
+          onError={() => markFailed(coverSrc)}
           className={cn("size-full object-cover", className)}
         />
       ) : (
-        <div style={FALLBACK_COVER_STYLE} className={cn("size-full", className)} />
+        <div
+          style={FALLBACK_COVER_STYLE}
+          className={cn("size-full", className)}
+        />
       )}
     </>
   )
@@ -177,7 +198,10 @@ export function SocialMockupCard({
               )}
             </div>
             <div className="flex items-center gap-1.5 text-xs opacity-70">
-              <SocialPlatformIcon platform={platform.id} className="size-3.5 shrink-0" />
+              <SocialPlatformIcon
+                platform={platform.id}
+                className="size-3.5 shrink-0"
+              />
               <span className="truncate">
                 {state.socialHandle || "@Oliviar_"} · {platform.shortLabel}
               </span>
@@ -185,7 +209,10 @@ export function SocialMockupCard({
           </div>
 
           {state.socialShowQr ? (
-            <QrCodeSvg value={targetUrl} className="size-14 shrink-0 rounded-full p-2" />
+            <QrCodeSvg
+              value={targetUrl}
+              className="size-14 shrink-0 rounded-full p-2"
+            />
           ) : (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded-full px-3.5 py-2 text-xs font-semibold text-white"
@@ -233,7 +260,10 @@ export function SocialMockupCard({
               {platform.shortLabel}
             </span>
             {state.socialShowQr && (
-              <QrCodeSvg value={targetUrl} className="size-11 shrink-0 rounded-xl p-1" />
+              <QrCodeSvg
+                value={targetUrl}
+                className="size-11 shrink-0 rounded-xl p-1"
+              />
             )}
           </div>
 
@@ -241,7 +271,7 @@ export function SocialMockupCard({
           <div className="relative z-10 flex flex-col p-5 pt-14">
             {renderAvatar("size-[72px]", "ring-[3px] ring-white/95")}
 
-            <div className="mt-3 flex items-center justify-between gap-2">
+            <div className="mt-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <h2 className="truncate font-heading text-[17px] leading-tight font-bold tracking-tight text-white">
@@ -255,15 +285,6 @@ export function SocialMockupCard({
                   {state.socialHandle || "@Oliviar_"}
                 </p>
               </div>
-
-              <div className="flex shrink-0 items-center gap-1.5">
-                <span className="inline-flex items-center rounded-full border border-white/75 bg-white/15 px-3.5 py-1 text-xs font-medium text-white backdrop-blur-md">
-                  Follow
-                </span>
-                <span className="flex size-7 items-center justify-center rounded-full border border-white/75 bg-white/15 text-white backdrop-blur-md">
-                  <IconBookmarkFilled className="size-3.5" />
-                </span>
-              </div>
             </div>
 
             {state.socialBio && (
@@ -272,22 +293,33 @@ export function SocialMockupCard({
               </p>
             )}
 
-            <div className="mt-3.5 grid grid-cols-3 gap-2 text-center">
-              {stats.map((stat, idx) => {
-                const StatIcon = STAT_ICONS[idx] ?? IconStarFilled
-                return (
-                  <div key={`${stat.label}-${idx}`} className="min-w-0">
-                    <div className="flex items-center justify-center gap-1 text-[15px] font-bold text-white tabular-nums">
-                      <StatIcon className="size-3.5 shrink-0 opacity-95" />
-                      <span className="truncate">{stat.value}</span>
+            {stats.length > 0 && (
+              <div
+                className={cn(
+                  "mt-3.5 grid gap-2 text-center",
+                  stats.length === 1
+                    ? "grid-cols-1"
+                    : stats.length === 2
+                      ? "grid-cols-2"
+                      : "grid-cols-3"
+                )}
+              >
+                {stats.map((stat, idx) => {
+                  const StatIcon = getStatIcon(stat.label)
+                  return (
+                    <div key={`${stat.label}-${idx}`} className="min-w-0">
+                      <div className="flex items-center justify-center gap-1 text-[15px] font-bold text-white tabular-nums">
+                        <StatIcon className="size-3.5 shrink-0 opacity-95" />
+                        <span className="truncate">{stat.value}</span>
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] font-medium text-white/80">
+                        {stat.label}
+                      </div>
                     </div>
-                    <div className="mt-0.5 truncate text-[11px] font-medium text-white/80">
-                      {stat.label}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            )}
 
             <div className="relative mt-4 flex h-11 w-full items-center justify-center rounded-full bg-white px-4 text-zinc-950 shadow-md">
               <span className="absolute left-1.5 flex size-8 items-center justify-center rounded-full bg-zinc-950 text-white">
@@ -348,7 +380,10 @@ export function SocialMockupCard({
 
           <div className="pointer-events-none absolute top-2.5 right-2.5 flex items-center gap-1.5">
             {state.socialShowQr ? (
-              <QrCodeSvg value={targetUrl} className="size-11 shrink-0 rounded-xl p-1" />
+              <QrCodeSvg
+                value={targetUrl}
+                className="size-11 shrink-0 rounded-xl p-1"
+              />
             ) : (
               <span className="inline-flex items-center gap-1 rounded-full bg-black/30 px-2 py-0.5 text-[10px] font-medium text-white ring-1 ring-white/20 backdrop-blur-md">
                 <SocialPlatformIcon platform={platform.id} className="size-3" />
@@ -366,8 +401,8 @@ export function SocialMockupCard({
           )}
         </div>
 
-        {/* Name + Handle + Follow / Bookmark */}
-        <div className="mt-2 flex items-center justify-between gap-2 px-1.5">
+        {/* Name + Handle */}
+        <div className="mt-2 px-1.5">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <h2 className="truncate font-heading text-[17px] leading-tight font-bold tracking-tight">
@@ -384,29 +419,6 @@ export function SocialMockupCard({
               {state.socialHandle || "@Oliviar_"}
             </p>
           </div>
-
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full px-3.5 py-1 text-xs font-medium",
-                isLightSurface
-                  ? "bg-zinc-950 text-white"
-                  : "bg-white text-zinc-950"
-              )}
-            >
-              Follow
-            </span>
-            <span
-              className={cn(
-                "flex size-7 items-center justify-center rounded-full border",
-                isLightSurface
-                  ? "border-zinc-200 text-zinc-700"
-                  : "border-white/20 text-zinc-200"
-              )}
-            >
-              <IconBookmark className="size-3.5" />
-            </span>
-          </div>
         </div>
 
         {/* Account Description */}
@@ -416,40 +428,52 @@ export function SocialMockupCard({
           </p>
         )}
 
-        {/* Thin Divider */}
-        <div
-          className={cn(
-            "mx-1.5 my-2.5 h-px",
-            isLightSurface ? "bg-zinc-200/80" : "bg-white/10"
-          )}
-        />
+        {/* Metrics Row (only when metrics exist) */}
+        {stats.length > 0 && (
+          <>
+            <div
+              className={cn(
+                "mx-1.5 my-2.5 h-px",
+                isLightSurface ? "bg-zinc-200/80" : "bg-white/10"
+              )}
+            />
 
-        {/* 3-Column Metrics Row */}
-        <div className="grid grid-cols-3 gap-2 px-1 text-center">
-          {stats.map((stat, idx) => {
-            const StatIcon = STAT_ICONS[idx] ?? IconStarFilled
-            return (
-              <div
-                key={`${stat.label}-${idx}`}
-                className={cn(
-                  "min-w-0",
-                  state.socialCardStyle === "bento" &&
-                    (isLightSurface
-                      ? "rounded-xl bg-zinc-100/80 py-1.5"
-                      : "rounded-xl bg-white/5 py-1.5")
-                )}
-              >
-                <div className="flex items-center justify-center gap-1 text-[15px] font-bold tabular-nums">
-                  <StatIcon className="size-3.5 shrink-0" />
-                  <span className="truncate">{stat.value}</span>
-                </div>
-                <div className="mt-0.5 truncate text-[11px] font-medium opacity-55">
-                  {stat.label}
-                </div>
-              </div>
-            )
-          })}
-        </div>
+            <div
+              className={cn(
+                "grid gap-2 px-1 text-center",
+                stats.length === 1
+                  ? "grid-cols-1"
+                  : stats.length === 2
+                    ? "grid-cols-2"
+                    : "grid-cols-3"
+              )}
+            >
+              {stats.map((stat, idx) => {
+                const StatIcon = getStatIcon(stat.label)
+                return (
+                  <div
+                    key={`${stat.label}-${idx}`}
+                    className={cn(
+                      "min-w-0",
+                      state.socialCardStyle === "bento" &&
+                        (isLightSurface
+                          ? "rounded-xl bg-zinc-100/80 py-1.5"
+                          : "rounded-xl bg-white/5 py-1.5")
+                    )}
+                  >
+                    <div className="flex items-center justify-center gap-1 text-[15px] font-bold tabular-nums">
+                      <StatIcon className="size-3.5 shrink-0" />
+                      <span className="truncate">{stat.value}</span>
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] font-medium opacity-55">
+                      {stat.label}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
 
         {/* Full-Width Bottom Pill CTA Bar */}
         <div
