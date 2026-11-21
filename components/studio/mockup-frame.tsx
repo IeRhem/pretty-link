@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 export function MockupFrame({
   state,
   isFetching = false,
+  previewGeneration = 0,
   zoomMultiplier = 1,
   maxWidthPx = 560,
   maxHeightPx = 560,
@@ -17,6 +18,7 @@ export function MockupFrame({
 }: {
   state: StudioState
   isFetching?: boolean
+  previewGeneration?: number
   zoomMultiplier?: number
   maxWidthPx?: number
   maxHeightPx?: number
@@ -163,6 +165,7 @@ export function MockupFrame({
               state={state}
               logicalWidth={logicalW}
               logicalHeight={logicalH}
+              previewGeneration={previewGeneration}
             />
           )}
         </div>

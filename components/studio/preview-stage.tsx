@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils"
 export function PreviewStage({
   state,
   isFetching,
+  previewGeneration = 0,
   onToggleTheme,
   onRandomize,
   onReset,
@@ -37,6 +38,7 @@ export function PreviewStage({
 }: {
   state: StudioState
   isFetching: boolean
+  previewGeneration?: number
   onToggleTheme: () => void
   onRandomize: () => void
   onReset: () => void
@@ -228,6 +230,7 @@ export function PreviewStage({
         <MockupFrame
           state={state}
           isFetching={isFetching}
+          previewGeneration={previewGeneration}
           zoomMultiplier={zoom}
           maxWidthPx={580}
           maxHeightPx={540}

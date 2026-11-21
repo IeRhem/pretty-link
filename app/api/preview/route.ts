@@ -54,7 +54,7 @@ function extractMetricsFromDescription(desc: string): string | null {
   if (!desc) return null
   const matches = Array.from(
     desc.matchAll(
-      /(\d+(?:[.,]\d+)?[KMB]?)\s+(Followers|Following|Posts|Subscribers|Videos|Shots|Likes)/gi
+      /(?<![\dA-Za-z])(?<!\d[.,])((?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)[KMB]?)\s+(Followers|Following|Posts|Subscribers|Videos|Shots|Likes)\b/gi
     )
   )
   if (matches.length === 0) return null
@@ -409,15 +409,21 @@ export async function GET(request: NextRequest) {
     try {
       const { response, finalUrl } = await safePublicFetch(cacheKey, {
         timeoutMs: 6000,
+        maxBytes: 49_152,
+        stream: true,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (compatible; PrettyLinkBot/1.0; +https://prettylink.app)",
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
         },
       })
-      if (!response.ok) return null
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {})
+        return null
+      }
       const ct = (response.headers.get("content-type") ?? "").toLowerCase()
       if (!ct.includes("text/html") && !ct.includes("application/xhtml")) {
+        await response.body?.cancel().catch(() => {})
         return null
       }
       const headHtml = await readHtmlHeadSnippet(response, 49_152)

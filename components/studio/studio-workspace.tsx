@@ -31,6 +31,7 @@ export function StudioWorkspace() {
       : DEFAULT_STUDIO_STATE
   })
   const [isFetching, setIsFetching] = React.useState(false)
+  const [previewGeneration, setPreviewGeneration] = React.useState(0)
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copiedImage, setCopiedImage] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
@@ -109,6 +110,7 @@ export function StudioWorkspace() {
           socialAvatarUrl: data.avatarUrl ?? "",
           socialCoverUrl: data.coverUrl ?? "",
         }))
+        setPreviewGeneration((g) => g + 1)
         notify(`Loaded preview for ${data.displayUrl}`)
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -193,6 +195,7 @@ export function StudioWorkspace() {
     fetchAbortRef.current?.abort()
     lastFetchedUrlRef.current = ""
     setIsFetching(false)
+    setPreviewGeneration((g) => g + 1)
     setState(DEFAULT_STUDIO_STATE)
     void fetchPreview(DEFAULT_STUDIO_STATE.url)
     notify("Reset studio to default showcase")
@@ -204,6 +207,7 @@ export function StudioWorkspace() {
 
   const handleApplyTemplate = React.useCallback(
     (patch: Partial<StudioState>) => {
+      setPreviewGeneration((g) => g + 1)
       setState((prev) => ({
         ...prev,
         ...patch,
@@ -253,6 +257,7 @@ export function StudioWorkspace() {
       <PreviewStage
         state={state}
         isFetching={isFetching}
+        previewGeneration={previewGeneration}
         onToggleTheme={handleToggleTheme}
         onRandomize={handleRandomize}
         onReset={handleReset}

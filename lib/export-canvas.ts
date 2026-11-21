@@ -35,17 +35,22 @@ function roundedRectPath(
   h: number,
   r: number | [number, number, number, number]
 ) {
-  const [tl, tr, br, bl] = Array.isArray(r) ? r : [r, r, r, r]
+  const maxR = Math.max(0, Math.min(w / 2, h / 2))
+  const raw = Array.isArray(r) ? r : [r, r, r, r]
+  const [tl, tr, br, bl] = raw.map((val) =>
+    Math.max(0, Math.min(maxR, val))
+  ) as [number, number, number, number]
+
   ctx.beginPath()
   ctx.moveTo(x + tl, y)
   ctx.lineTo(x + w - tr, y)
-  ctx.quadraticCurveTo(x + w, y, x + w, y + tr)
+  ctx.arcTo(x + w, y, x + w, y + tr, tr)
   ctx.lineTo(x + w, y + h - br)
-  ctx.quadraticCurveTo(x + w, y + h, x + w - br, y + h)
+  ctx.arcTo(x + w, y + h, x + w - br, y + h, br)
   ctx.lineTo(x + bl, y + h)
-  ctx.quadraticCurveTo(x, y + h, x, y + h - bl)
+  ctx.arcTo(x, y + h, x, y + h - bl, bl)
   ctx.lineTo(x, y + tl)
-  ctx.quadraticCurveTo(x, y, x + tl, y)
+  ctx.arcTo(x, y, x + tl, y, tl)
   ctx.closePath()
 }
 
@@ -72,6 +77,25 @@ function tryLoadHtmlImage(
 
 async function loadImageSafe(src: string | null | undefined): Promise<HTMLImageElement | null> {
   if (!src) return null
+
+  if (src.startsWith("/api/image-proxy?")) {
+    const proxied = await tryLoadHtmlImage(src, {
+      crossOrigin: "anonymous",
+      timeoutMs: 12_000,
+    })
+    if (proxied) return proxied
+
+    const direct = new URLSearchParams(src.split("?")[1] ?? "").get("url")
+    if (direct && /^https?:\/\//i.test(direct)) {
+      return tryLoadHtmlImage(direct, {
+        crossOrigin: "anonymous",
+        referrerPolicy: "no-referrer",
+        timeoutMs: 8_000,
+      })
+    }
+    return null
+  }
+
   if (src.startsWith("data:") || src.startsWith("blob:") || src.startsWith("/")) {
     return tryLoadHtmlImage(src, { crossOrigin: "anonymous", timeoutMs: 12_000 })
   }
@@ -80,7 +104,7 @@ async function loadImageSafe(src: string | null | undefined): Promise<HTMLImageE
   if (proxied) {
     const viaProxy = await tryLoadHtmlImage(proxied, {
       crossOrigin: "anonymous",
-      timeoutMs: 10_000,
+      timeoutMs: 12_000,
     })
     if (viaProxy) return viaProxy
   }
@@ -715,6 +739,107 @@ function drawCoverOrEmeraldMesh(
   ctx.fillRect(x, y, w, h)
 }
 
+function drawVerifiedBadge(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  badgeFill: string,
+  checkColor: string
+) {
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fillStyle = badgeFill
+  ctx.fill()
+
+  ctx.strokeStyle = checkColor
+  ctx.lineWidth = Math.max(1.3, r * 0.28)
+  ctx.lineCap = "round"
+  ctx.lineJoin = "round"
+  ctx.beginPath()
+  ctx.moveTo(cx - r * 0.42, cy + r * 0.04)
+  ctx.lineTo(cx - r * 0.1, cy + r * 0.36)
+  ctx.lineTo(cx + r * 0.44, cy - r * 0.3)
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawPlatformBadgePill(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  anchorX: number,
+  y: number,
+  scaleFactor: number,
+  accent: string,
+  alignRight: boolean
+) {
+  ctx.save()
+  ctx.font = `600 ${Math.round(10 * scaleFactor)}px "DM Sans", sans-serif`
+  const textW = ctx.measureText(label).width
+  const padX = Math.round(8 * scaleFactor)
+  const dotR = Math.max(2.5, 3 * scaleFactor)
+  const gap = Math.round(5 * scaleFactor)
+  const pillH = Math.round(20 * scaleFactor)
+  const pillW = Math.round(padX * 2 + dotR * 2 + gap + textW)
+  const pillX = alignRight ? anchorX - pillW : anchorX
+
+  roundedRectPath(ctx, pillX, y, pillW, pillH, 999)
+  ctx.fillStyle = "rgba(0, 0, 0, 0.32)"
+  ctx.fill()
+  ctx.lineWidth = Math.max(1, scaleFactor * 0.8)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.22)"
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.arc(pillX + padX + dotR, y + pillH / 2, dotR, 0, Math.PI * 2)
+  ctx.fillStyle = accent
+  ctx.fill()
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)"
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  ctx.fillText(label, pillX + padX + dotR * 2 + gap, y + pillH / 2 + 0.5)
+  ctx.restore()
+}
+
+function drawCircularAvatar(
+  ctx: CanvasRenderingContext2D,
+  avX: number,
+  avY: number,
+  avSize: number,
+  avatarImg: HTMLImageElement | null,
+  initial: string,
+  accent: string,
+  ringColor?: string,
+  ringWidth = 0
+) {
+  ctx.save()
+  if (ringColor && ringWidth > 0) {
+    ctx.beginPath()
+    ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2 + ringWidth, 0, Math.PI * 2)
+    ctx.fillStyle = ringColor
+    ctx.fill()
+  }
+
+  ctx.beginPath()
+  ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2)
+  ctx.clip()
+
+  if (avatarImg) {
+    drawCoverImage(ctx, avatarImg, avX, avY, avSize, avSize)
+  } else {
+    ctx.fillStyle = accent
+    ctx.fillRect(avX, avY, avSize, avSize)
+    ctx.font = `700 ${Math.round(avSize * 0.42)}px "Instrument Sans", sans-serif`
+    ctx.fillStyle = "#FFFFFF"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText(initial, avX + avSize / 2, avY + avSize / 2)
+  }
+  ctx.restore()
+}
+
 async function drawSocialMode(
   ctx: CanvasRenderingContext2D,
   state: StudioState,
@@ -722,28 +847,86 @@ async function drawSocialMode(
   height: number
 ) {
   const minDim = Math.min(width, height)
-  const scaleFactor = (state.frameScale / 100) * (minDim / 500)
+  const userScale = state.frameScale / 100
+  const scaleFactor = userScale * (minDim / 500)
   const platform = SOCIAL_PLATFORMS[state.socialPlatform] ?? SOCIAL_PLATFORMS.custom
+  const isPill = state.socialCardStyle === "pill"
   const isFullCover = state.socialCardStyle === "glass"
   const isDarkSurface =
     state.socialCardTheme === "dark" ||
     (state.socialCardTheme === "glass" && state.socialCardStyle !== "elevated")
   const isLightSurface = !isDarkSurface
 
-  const cardW =
-    state.socialCardStyle === "pill"
-      ? Math.round(width * 0.86 * (state.frameScale / 100))
-      : Math.round(Math.min(width * 0.84, 370 * scaleFactor))
-  const cardH =
-    state.socialCardStyle === "pill"
-      ? Math.round(Math.min(height * 0.42, 195 * scaleFactor))
-      : Math.round(Math.min(height * 0.86, 430 * scaleFactor))
+  const avatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || null
+  const coverSrc = state.socialCoverUrl || state.metadata?.coverUrl || null
+  const [avatarImg, coverImg] = await Promise.all([
+    loadImageSafe(avatarSrc),
+    isPill ? Promise.resolve(null) : loadImageSafe(coverSrc),
+  ])
+
+  const displayName = state.socialDisplayName || "Olivia Rhye"
+  const initial = displayName.charAt(0).toUpperCase() || "O"
+  const handleText = state.socialHandle || "@Oliviar_"
+  const displayUrl = formatDisplayUrl(state.url)
+
+  const cardW = isPill
+    ? Math.round(width * 0.86 * userScale)
+    : Math.round(Math.min(width * 0.82 * userScale, 360 * scaleFactor))
+
+  const pad = Math.round((isFullCover ? 20 : 14) * scaleFactor)
+  const innerPadOffset = Math.round((isFullCover ? 0 : 6) * scaleFactor)
+  const innerW = Math.max(80, cardW - pad * 2 - innerPadOffset * 2)
+
+  ctx.font = `400 ${Math.round(12 * scaleFactor)}px "DM Sans", sans-serif`
+  const descLines =
+    !isPill && state.socialBio?.trim()
+      ? wrapLines(ctx, state.socialBio, innerW, 2)
+      : []
+  const stats = isPill ? [] : parseSocialStats(state.socialMetrics)
+  const isBentoStats = !isPill && !isFullCover && state.socialCardStyle === "bento"
+
+  const browserBarH =
+    !isPill && !isFullCover && state.socialCardStyle === "browser"
+      ? Math.round(32 * scaleFactor)
+      : 0
+  const bannerH = isFullCover ? 0 : Math.round(108 * scaleFactor)
+  const bannerRelY = browserBarH > 0 ? browserBarH + Math.round(12 * scaleFactor) : pad
+  const avSize = Math.round((isFullCover ? 72 : 68) * scaleFactor)
+  const avRelY = isFullCover
+    ? Math.round(56 * scaleFactor)
+    : bannerRelY + bannerH - Math.round(36 * scaleFactor)
+  const rowRelY = avRelY + avSize + Math.round((isFullCover ? 12 : 8) * scaleFactor)
+  const afterNameRelY = rowRelY + Math.round(38 * scaleFactor)
+
+  let cursorRelY = afterNameRelY
+  const bioLineStep = Math.round(17 * scaleFactor)
+  const descRelY = cursorRelY + Math.round((isFullCover ? 10 : 8) * scaleFactor)
+  if (descLines.length > 0) {
+    cursorRelY = descRelY + descLines.length * bioLineStep
+  }
+
+  let dividerRelY = 0
+  let statsRelY = 0
+  const statsBoxH = Math.round((isBentoStats ? 46 : 36) * scaleFactor)
+  if (stats.length > 0) {
+    if (!isFullCover) {
+      dividerRelY = cursorRelY + Math.round(10 * scaleFactor)
+      statsRelY = dividerRelY + 1 + Math.round(10 * scaleFactor)
+    } else {
+      statsRelY = cursorRelY + Math.round(14 * scaleFactor)
+    }
+    cursorRelY = statsRelY + statsBoxH
+  }
+
+  const ctaRelY = cursorRelY + Math.round((isFullCover ? 16 : 14) * scaleFactor)
+  const ctaH = Math.round(44 * scaleFactor)
+
+  const cardH = isPill
+    ? Math.round(Math.min(height * 0.42, 195 * scaleFactor))
+    : ctaRelY + ctaH + pad
   const cx = Math.round((width - cardW) / 2)
   const cy = Math.round((height - cardH) / 2)
-  const cardR =
-    state.socialCardStyle === "pill"
-      ? Math.round(cardH / 2)
-      : Math.round(28 * scaleFactor)
+  const cardR = isPill ? Math.round(cardH / 2) : Math.round(28 * scaleFactor)
 
   // Drop shadow
   if (state.frameShadow > 0) {
@@ -761,14 +944,6 @@ async function drawSocialMode(
   roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
   ctx.clip()
 
-  const avatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || null
-  const coverSrc = state.socialCoverUrl || state.metadata?.coverUrl || null
-
-  const [avatarImg, coverImg] = await Promise.all([
-    loadImageSafe(avatarSrc),
-    loadImageSafe(coverSrc),
-  ])
-
   const fg = isFullCover || isDarkSurface ? "#FAFAFA" : "#09090B"
   const mutedFg = isFullCover
     ? "rgba(255,255,255,0.82)"
@@ -776,54 +951,53 @@ async function drawSocialMode(
       ? "#A1A1AA"
       : "#52525B"
 
-  if (state.socialCardStyle === "pill") {
+  if (isPill) {
     ctx.fillStyle = isLightSurface ? "rgba(255,255,255,0.94)" : "rgba(17,17,21,0.9)"
     ctx.fillRect(cx, cy, cardW, cardH)
 
-    const avSize = Math.round(cardH * 0.62)
-    const avX = cx + Math.round((cardH - avSize) / 2)
-    const avY = cy + Math.round((cardH - avSize) / 2)
+    const pillAvSize = Math.round(cardH * 0.62)
+    const avX = cx + Math.round((cardH - pillAvSize) / 2)
+    const avY = cy + Math.round((cardH - pillAvSize) / 2)
+    drawCircularAvatar(
+      ctx,
+      avX,
+      avY,
+      pillAvSize,
+      avatarImg,
+      initial,
+      platform.accent,
+      "rgba(255,255,255,0.8)",
+      Math.round(2 * scaleFactor)
+    )
 
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2)
-    ctx.clip()
-    if (avatarImg) {
-      drawCoverImage(ctx, avatarImg, avX, avY, avSize, avSize)
-    } else {
-      ctx.fillStyle = platform.accent
-      ctx.fillRect(avX, avY, avSize, avSize)
-      ctx.font = `700 ${Math.round(avSize * 0.42)}px "Instrument Sans", sans-serif`
-      ctx.fillStyle = "#FFFFFF"
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-      ctx.fillText(
-        (state.socialDisplayName || "O").charAt(0).toUpperCase(),
-        avX + avSize / 2,
-        avY + avSize / 2
-      )
-      ctx.textAlign = "left"
-    }
-    ctx.restore()
-
-    const textX = avX + avSize + Math.round(16 * scaleFactor)
+    const textX = avX + pillAvSize + Math.round(16 * scaleFactor)
     const rightSpace = state.socialShowQr ? cardH * 0.72 : 110 * scaleFactor
     const textMaxW = Math.max(80, cx + cardW - textX - rightSpace)
 
     ctx.textBaseline = "top"
+    ctx.textAlign = "left"
     ctx.font = `700 ${Math.round(18 * scaleFactor)}px "Instrument Sans", sans-serif`
     ctx.fillStyle = fg
-    ctx.fillText(
-      state.socialDisplayName || "Olivia Rhye",
-      textX,
-      cy + cardH * 0.28,
-      textMaxW
-    )
+    const badgeR = Math.round(7.5 * scaleFactor)
+    const badgeSpace = state.socialVerified ? badgeR * 2 + Math.round(6 * scaleFactor) : 0
+    const maxNameW = Math.max(40, textMaxW - badgeSpace)
+    const measuredNameW = Math.min(ctx.measureText(displayName).width, maxNameW)
+    ctx.fillText(displayName, textX, cy + cardH * 0.28, maxNameW)
+    if (state.socialVerified) {
+      drawVerifiedBadge(
+        ctx,
+        textX + measuredNameW + Math.round(6 * scaleFactor) + badgeR,
+        cy + cardH * 0.28 + Math.round(9.5 * scaleFactor),
+        badgeR,
+        platform.accent,
+        "#FFFFFF"
+      )
+    }
 
     ctx.font = `500 ${Math.round(13 * scaleFactor)}px "DM Sans", sans-serif`
     ctx.fillStyle = mutedFg
     ctx.fillText(
-      `${state.socialHandle || "@Oliviar_"} · ${platform.shortLabel}`,
+      `${handleText} · ${platform.shortLabel}`,
       textX,
       cy + cardH * 0.56,
       textMaxW
@@ -840,9 +1014,6 @@ async function drawSocialMode(
       )
     }
   } else {
-    const pad = Math.round(isFullCover ? 20 * scaleFactor : 14 * scaleFactor)
-    let contentTop = cy + pad
-
     if (isFullCover) {
       drawCoverOrEmeraldMesh(ctx, coverImg, cx, cy, cardW, cardH)
       const scrim = ctx.createLinearGradient(cx, cy, cx, cy + cardH)
@@ -851,21 +1022,41 @@ async function drawSocialMode(
       scrim.addColorStop(1, "rgba(0,0,0,0.64)")
       ctx.fillStyle = scrim
       ctx.fillRect(cx, cy, cardW, cardH)
+
+      drawPlatformBadgePill(
+        ctx,
+        platform.shortLabel,
+        cx + Math.round(14 * scaleFactor),
+        cy + Math.round(14 * scaleFactor),
+        scaleFactor,
+        platform.accent,
+        false
+      )
+
+      if (state.socialShowQr) {
+        const qrSize = Math.round(44 * scaleFactor)
+        drawQrOnCanvas(
+          ctx,
+          normalizeUrl(state.url) || "https://www.lerhem.space",
+          cx + cardW - Math.round(14 * scaleFactor) - qrSize,
+          cy + Math.round(14 * scaleFactor),
+          qrSize
+        )
+      }
     } else {
       ctx.fillStyle = isLightSurface ? "#FFFFFF" : "#111115"
       ctx.fillRect(cx, cy, cardW, cardH)
 
-      if (state.socialCardStyle === "browser") {
-        const barH = Math.round(28 * scaleFactor)
+      if (browserBarH > 0) {
         ctx.fillStyle = isLightSurface
           ? "rgba(9,9,11,0.04)"
           : "rgba(255,255,255,0.05)"
-        ctx.fillRect(cx, cy, cardW, barH)
+        ctx.fillRect(cx, cy, cardW, browserBarH)
         for (let i = 0; i < 3; i++) {
           ctx.beginPath()
           ctx.arc(
             cx + (16 + i * 12) * scaleFactor,
-            cy + barH / 2,
+            cy + browserBarH / 2,
             Math.max(2.5, 3.8 * scaleFactor),
             0,
             Math.PI * 2
@@ -873,150 +1064,157 @@ async function drawSocialMode(
           ctx.fillStyle = ["#FF5F57", "#FEBC2E", "#28C840"][i]!
           ctx.fill()
         }
-        contentTop = cy + barH + Math.round(10 * scaleFactor)
+        ctx.font = `500 ${Math.round(10 * scaleFactor)}px ui-monospace, monospace`
+        ctx.fillStyle = isLightSurface ? "rgba(9,9,11,0.6)" : "rgba(250,250,250,0.6)"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillText(displayUrl, cx + cardW / 2, cy + browserBarH / 2, cardW * 0.55)
+        ctx.textAlign = "left"
       }
 
       // Inset rounded cover banner
-      const bannerH = Math.round(108 * scaleFactor)
+      const bannerX = cx + pad
+      const bannerY = cy + bannerRelY
       const bannerW = cardW - pad * 2
       ctx.save()
       roundedRectPath(
         ctx,
-        cx + pad,
-        contentTop,
+        bannerX,
+        bannerY,
         bannerW,
         bannerH,
         Math.round(20 * scaleFactor)
       )
       ctx.clip()
-      drawCoverOrEmeraldMesh(ctx, coverImg, cx + pad, contentTop, bannerW, bannerH)
+      drawCoverOrEmeraldMesh(ctx, coverImg, bannerX, bannerY, bannerW, bannerH)
       ctx.restore()
-    }
 
-    if (state.socialShowQr) {
-      const qrSize = Math.round(44 * scaleFactor)
-      drawQrOnCanvas(
-        ctx,
-        normalizeUrl(state.url) || "https://www.lerhem.space",
-        cx + cardW - pad - Math.round(10 * scaleFactor) - qrSize,
-        contentTop + Math.round(10 * scaleFactor),
-        qrSize
-      )
+      if (state.socialShowQr) {
+        const qrSize = Math.round(44 * scaleFactor)
+        drawQrOnCanvas(
+          ctx,
+          normalizeUrl(state.url) || "https://www.lerhem.space",
+          bannerX + bannerW - Math.round(10 * scaleFactor) - qrSize,
+          bannerY + Math.round(10 * scaleFactor),
+          qrSize
+        )
+      } else {
+        drawPlatformBadgePill(
+          ctx,
+          platform.shortLabel,
+          bannerX + bannerW - Math.round(10 * scaleFactor),
+          bannerY + Math.round(10 * scaleFactor),
+          scaleFactor,
+          platform.accent,
+          true
+        )
+      }
     }
 
     // Circular Avatar
-    const avSize = Math.round((isFullCover ? 72 : 68) * scaleFactor)
     const avX = cx + pad + Math.round((isFullCover ? 0 : 12) * scaleFactor)
-    const avY = isFullCover
-      ? cy + Math.round(54 * scaleFactor)
-      : contentTop + Math.round(108 * scaleFactor) - Math.round(36 * scaleFactor)
-
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(
-      avX + avSize / 2,
-      avY + avSize / 2,
-      avSize / 2 + Math.round(3.5 * scaleFactor),
-      0,
-      Math.PI * 2
+    const avY = cy + avRelY
+    drawCircularAvatar(
+      ctx,
+      avX,
+      avY,
+      avSize,
+      avatarImg,
+      initial,
+      platform.accent,
+      isFullCover
+        ? "rgba(255,255,255,0.95)"
+        : isLightSurface
+          ? "#FFFFFF"
+          : "#111115",
+      Math.round((isFullCover ? 3 : 4) * scaleFactor)
     )
-    ctx.fillStyle = isFullCover
-      ? "rgba(255,255,255,0.95)"
-      : isLightSurface
-        ? "#FFFFFF"
-        : "#111115"
-    ctx.fill()
-    ctx.beginPath()
-    ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2)
-    ctx.clip()
-    if (avatarImg) {
-      drawCoverImage(ctx, avatarImg, avX, avY, avSize, avSize)
-    } else {
-      ctx.fillStyle = platform.accent
-      ctx.fillRect(avX, avY, avSize, avSize)
-      ctx.font = `700 ${Math.round(avSize * 0.42)}px "Instrument Sans", sans-serif`
-      ctx.fillStyle = "#FFFFFF"
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-      ctx.fillText(
-        (state.socialDisplayName || "O").charAt(0).toUpperCase(),
-        avX + avSize / 2,
-        avY + avSize / 2
-      )
-      ctx.textAlign = "left"
-    }
-    ctx.restore()
 
-    // Name & Handle
-    const innerPadX = cx + pad + Math.round((isFullCover ? 0 : 6) * scaleFactor)
-    const innerW = cardW - pad * 2 - Math.round((isFullCover ? 0 : 12) * scaleFactor)
-    const rowY = avY + avSize + Math.round(12 * scaleFactor)
-
-    // Display name & handle
+    // Name + Verified badge + Handle
+    const innerPadX = cx + pad + innerPadOffset
+    const rowY = cy + rowRelY
     const textMaxW = Math.max(80, innerW)
     ctx.textBaseline = "top"
+    ctx.textAlign = "left"
     ctx.font = `700 ${Math.round(17 * scaleFactor)}px "Instrument Sans", sans-serif`
     ctx.fillStyle = fg
-    ctx.fillText(state.socialDisplayName || "Olivia Rhye", innerPadX, rowY, textMaxW)
+
+    const badgeR = Math.round(7.5 * scaleFactor)
+    const badgeSpace = state.socialVerified ? badgeR * 2 + Math.round(6 * scaleFactor) : 0
+    const maxNameW = Math.max(40, textMaxW - badgeSpace)
+    const measuredNameW = Math.min(ctx.measureText(displayName).width, maxNameW)
+    ctx.fillText(displayName, innerPadX, rowY, maxNameW)
+
+    if (state.socialVerified) {
+      drawVerifiedBadge(
+        ctx,
+        innerPadX + measuredNameW + Math.round(6 * scaleFactor) + badgeR,
+        rowY + Math.round(9.5 * scaleFactor),
+        badgeR,
+        isFullCover ? "#FFFFFF" : platform.accent,
+        isFullCover ? "#09090B" : "#FFFFFF"
+      )
+    }
 
     ctx.font = `500 ${Math.round(12 * scaleFactor)}px "DM Sans", sans-serif`
     ctx.fillStyle = mutedFg
-    ctx.fillText(
-      state.socialHandle || "@Oliviar_",
-      innerPadX,
-      rowY + 21 * scaleFactor,
-      textMaxW
-    )
+    ctx.fillText(handleText, innerPadX, rowY + Math.round(21 * scaleFactor), textMaxW)
 
     // Description
-    const descY = rowY + Math.round(44 * scaleFactor)
-    ctx.font = `400 ${Math.round(12 * scaleFactor)}px "DM Sans", sans-serif`
-    ctx.fillStyle = isFullCover
-      ? "rgba(255,255,255,0.9)"
-      : isDarkSurface
-        ? "rgba(250,250,250,0.78)"
-        : "rgba(9,9,11,0.75)"
-    const descLines = wrapLines(ctx, state.socialBio || "", innerW, 2)
-    descLines.forEach((line, i) => {
-      ctx.fillText(line, innerPadX, descY + i * Math.round(17 * scaleFactor))
-    })
+    if (descLines.length > 0) {
+      const descY = cy + descRelY
+      ctx.font = `400 ${Math.round(12 * scaleFactor)}px "DM Sans", sans-serif`
+      ctx.fillStyle = isFullCover
+        ? "rgba(255,255,255,0.9)"
+        : isDarkSurface
+          ? "rgba(250,250,250,0.78)"
+          : "rgba(9,9,11,0.75)"
+      descLines.forEach((line, i) => {
+        ctx.fillText(line, innerPadX, descY + i * bioLineStep)
+      })
+    }
 
-    const afterDescY =
-      descY + Math.max(0, descLines.length) * Math.round(17 * scaleFactor)
-
-    const ctaH = Math.round(44 * scaleFactor)
-    const ctaY = cy + cardH - pad - ctaH
-    const stats = parseSocialStats(state.socialMetrics)
-
+    // Metrics row (only when metrics exist)
     if (stats.length > 0) {
-      if (!isFullCover) {
-        const divY = afterDescY + Math.round(10 * scaleFactor)
+      if (!isFullCover && dividerRelY > 0) {
         ctx.fillStyle = isLightSurface
           ? "rgba(228, 228, 231, 0.9)"
           : "rgba(255, 255, 255, 0.10)"
-        ctx.fillRect(innerPadX, divY, innerW, 1)
+        ctx.fillRect(innerPadX, cy + dividerRelY, innerW, 1)
       }
 
-      const statsY = ctaY - Math.round(48 * scaleFactor)
-      const colW = innerW / stats.length
+      const statsY = cy + statsRelY
+      const gap = Math.round(8 * scaleFactor)
+      const colW = (innerW - gap * (stats.length - 1)) / stats.length
 
-      ctx.textAlign = "center"
-      ctx.textBaseline = "top"
       stats.forEach((stat, idx) => {
-        const colCx = innerPadX + colW * idx + colW / 2
+        const colX = innerPadX + (colW + gap) * idx
+        const colCx = colX + colW / 2
+        if (isBentoStats) {
+          roundedRectPath(ctx, colX, statsY, colW, statsBoxH, Math.round(12 * scaleFactor))
+          ctx.fillStyle = isLightSurface
+            ? "rgba(244, 244, 245, 0.85)"
+            : "rgba(255, 255, 255, 0.06)"
+          ctx.fill()
+        }
+        const textTop = isBentoStats ? statsY + Math.round(6 * scaleFactor) : statsY
+
+        ctx.textAlign = "center"
+        ctx.textBaseline = "top"
         ctx.font = `700 ${Math.round(15 * scaleFactor)}px "Instrument Sans", sans-serif`
         ctx.fillStyle = fg
-        ctx.fillText(stat.value, colCx, statsY, colW - 8)
+        ctx.fillText(stat.value, colCx, textTop, colW - 8)
 
         ctx.font = `500 ${Math.round(11 * scaleFactor)}px "DM Sans", sans-serif`
         ctx.fillStyle = mutedFg
-        ctx.fillText(stat.label, colCx, statsY + Math.round(19 * scaleFactor), colW - 8)
+        ctx.fillText(stat.label, colCx, textTop + Math.round(19 * scaleFactor), colW - 8)
       })
       ctx.textAlign = "left"
     }
 
     // Full-Width Bottom Pill CTA Bar
     const ctaX = cx + pad
+    const ctaY = cy + ctaRelY
     const ctaW = cardW - pad * 2
     roundedRectPath(ctx, ctaX, ctaY, ctaW, ctaH, 999)
     if (isFullCover || isDarkSurface) {

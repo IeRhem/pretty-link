@@ -68,38 +68,59 @@ export function SocialMockupCard({
   state,
   logicalWidth,
   logicalHeight,
+  previewGeneration = 0,
 }: {
   state: StudioState
   logicalWidth: number
   logicalHeight: number
+  previewGeneration?: number
 }) {
-  const [failedUrls, setFailedUrls] = React.useState<string[]>([])
   const platform = SOCIAL_PLATFORMS[state.socialPlatform] ?? SOCIAL_PLATFORMS.custom
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const userScale = state.frameScale / 100
 
+  const rawAvatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || ""
+  const rawCoverSrc = state.socialCoverUrl || state.metadata?.coverUrl || ""
+  const generationKey = `${previewGeneration}|${state.metadata?.fetchedAt ?? ""}|${state.url}|${rawAvatarSrc}|${rawCoverSrc}`
+
+  const [failedState, setFailedState] = React.useState<{
+    generationKey: string
+    urls: string[]
+  }>({ generationKey, urls: [] })
+
+  const activeFailedUrls =
+    failedState.generationKey === generationKey ? failedState.urls : []
+
   const markFailed = (src: string) => {
-    setFailedUrls((prev) => (prev.includes(src) ? prev : [...prev, src]))
+    setFailedState((prev) => {
+      const currentUrls = prev.generationKey === generationKey ? prev.urls : []
+      if (currentUrls.includes(src)) {
+        return prev.generationKey === generationKey
+          ? prev
+          : { generationKey, urls: currentUrls }
+      }
+      return {
+        generationKey,
+        urls: [...currentUrls, src],
+      }
+    })
   }
 
   const resolveImageWithProxyFallback = (rawSrc: string): string => {
     if (!rawSrc) return ""
-    if (!failedUrls.includes(rawSrc)) return rawSrc
+    if (!activeFailedUrls.includes(rawSrc)) return rawSrc
     if (rawSrc.startsWith("/api/image-proxy?")) {
       const direct = new URLSearchParams(rawSrc.split("?")[1] ?? "").get("url")
-      if (direct && !failedUrls.includes(direct)) return direct
+      if (direct && !activeFailedUrls.includes(direct)) return direct
     } else if (/^https?:\/\//i.test(rawSrc)) {
       const proxied = toImageProxyUrl(rawSrc)
-      if (proxied && !failedUrls.includes(proxied)) return proxied
+      if (proxied && !activeFailedUrls.includes(proxied)) return proxied
     }
     return ""
   }
 
-  const rawAvatarSrc = state.socialAvatarUrl || state.metadata?.avatarUrl || ""
   const avatarSrc = resolveImageWithProxyFallback(rawAvatarSrc)
-
-  const rawCoverSrc = state.socialCoverUrl || state.metadata?.coverUrl || ""
   const coverSrc = resolveImageWithProxyFallback(rawCoverSrc)
 
   const isDarkSurface =
@@ -133,6 +154,7 @@ export function SocialMockupCard({
       {avatarSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          key={`${generationKey}:${avatarSrc}`}
           src={avatarSrc}
           alt={state.socialDisplayName}
           referrerPolicy="no-referrer"
@@ -150,6 +172,7 @@ export function SocialMockupCard({
       {coverSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          key={`${generationKey}:${coverSrc}`}
           src={coverSrc}
           alt="Account cover"
           referrerPolicy="no-referrer"
