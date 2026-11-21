@@ -1,0 +1,195 @@
+import { NextRequest } from "next/server"
+import { safePublicFetch } from "@/lib/server-fetch"
+import { validatePublicUrl } from "@/lib/url-utils"
+
+const DESKTOP_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+const VALID_RASTER_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+])
+
+const MAX_BYTES = 10 * 1024 * 1024 // 10 MB
+const CACHE_MAX_BYTES = 5 * 1024 * 1024 // 5 MB
+const SCREENSHOT_CACHE_TTL_MS = 15 * 60 * 1000
+const SCREENSHOT_CACHE_MAX = 40
+const MIN_SCREENSHOT_BYTES = 2500
+
+const screenshotCache = new Map<
+  string,
+  { buffer: ArrayBuffer; contentType: string; expiresAt: number }
+>()
+
+function getCachedScreenshot(key: string) {
+  const entry = screenshotCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiresAt) {
+    screenshotCache.delete(key)
+    return null
+  }
+  return entry
+}
+
+function setCachedScreenshot(
+  key: string,
+  buffer: ArrayBuffer,
+  contentType: string
+) {
+  if (buffer.byteLength > CACHE_MAX_BYTES) return
+  if (screenshotCache.size >= SCREENSHOT_CACHE_MAX) {
+    const oldestKey = screenshotCache.keys().next().value
+    if (oldestKey !== undefined) screenshotCache.delete(oldestKey)
+  }
+  screenshotCache.set(key, {
+    buffer,
+    contentType,
+    expiresAt: Date.now() + SCREENSHOT_CACHE_TTL_MS,
+  })
+}
+
+async function tryFetchRasterImage(
+  url: string,
+  timeoutMs: number
+): Promise<{
+  buffer: ArrayBuffer
+  contentType: string
+  finalUrl: URL
+} | null> {
+  try {
+    const { response, finalUrl } = await safePublicFetch(url, {
+      timeoutMs,
+      headers: {
+        "User-Agent": DESKTOP_USER_AGENT,
+        Accept: "image/webp,image/png,image/jpeg,image/*;q=0.8",
+      },
+    })
+    if (!response.ok) return null
+
+    const contentType = (response.headers.get("content-type") ?? "")
+      .split(";")[0]!
+      .trim()
+      .toLowerCase()
+
+    if (!VALID_RASTER_TYPES.has(contentType)) {
+      return null
+    }
+    if (finalUrl.pathname.toLowerCase().endsWith("default.gif")) {
+      return null
+    }
+
+    const buffer = await response.arrayBuffer()
+    if (buffer.byteLength <= MIN_SCREENSHOT_BYTES || buffer.byteLength > MAX_BYTES) {
+      return null
+    }
+    return { buffer, contentType, finalUrl }
+  } catch {
+    return null
+  }
+}
+
+async function tryMicrolink(targetUrl: string) {
+  const endpoint = `https://api.microlink.io/?url=${encodeURIComponent(
+    targetUrl
+  )}&screenshot=true&meta=false&viewport.width=1280&viewport.height=900`
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
+
+  try {
+    const res = await fetch(endpoint, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": DESKTOP_USER_AGENT,
+      },
+    })
+    if (!res.ok) return null
+
+    const json = (await res.json()) as {
+      status?: string
+      data?: { screenshot?: { url?: string } }
+    }
+    const shotUrl = json.data?.screenshot?.url
+    if (!shotUrl) return null
+
+    const check = validatePublicUrl(shotUrl)
+    if (!check.ok) return null
+
+    return await tryFetchRasterImage(check.url.toString(), 8000)
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function tryWordPressMshots(targetUrl: string) {
+  const mshotsUrl = `https://s0.wp.com/mshots/v1/${encodeURIComponent(
+    targetUrl
+  )}?w=1280&h=960`
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await tryFetchRasterImage(mshotsUrl, 8000)
+    if (result) return result
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 1800))
+    }
+  }
+  return null
+}
+
+async function tryThumIo(targetUrl: string) {
+  const thumUrl = `https://image.thum.io/get/width/1280/crop/900/noanimate/${targetUrl}`
+  return tryFetchRasterImage(thumUrl, 8000)
+}
+
+export async function GET(request: NextRequest) {
+  const rawUrl = request.nextUrl.searchParams.get("url")
+  if (!rawUrl) {
+    return Response.json({ error: "Missing url parameter." }, { status: 400 })
+  }
+
+  const check = validatePublicUrl(rawUrl)
+  if (!check.ok) {
+    return Response.json({ error: check.error }, { status: 400 })
+  }
+
+  const targetUrl = check.url.toString()
+  const cached = getCachedScreenshot(targetUrl)
+  if (cached) {
+    return new Response(cached.buffer.slice(0), {
+      status: 200,
+      headers: {
+        "Content-Type": cached.contentType,
+        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "X-Content-Type-Options": "nosniff",
+      },
+    })
+  }
+
+  const captured =
+    (await tryMicrolink(targetUrl)) ??
+    (await tryWordPressMshots(targetUrl)) ??
+    (await tryThumIo(targetUrl))
+
+  if (!captured) {
+    return Response.json(
+      { error: "Could not capture website screenshot." },
+      { status: 502 }
+    )
+  }
+
+  setCachedScreenshot(targetUrl, captured.buffer, captured.contentType)
+
+  return new Response(captured.buffer, {
+    status: 200,
+    headers: {
+      "Content-Type": captured.contentType,
+      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+      "X-Content-Type-Options": "nosniff",
+    },
+  })
+}

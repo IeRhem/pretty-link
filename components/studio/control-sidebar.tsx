@@ -1,0 +1,705 @@
+"use client"
+
+import * as React from "react"
+import {
+  IconAdjustments,
+  IconCheck,
+  IconChevronDown,
+  IconCopy,
+  IconLink,
+  IconPhoto,
+  IconPhotoUp,
+  IconTrash,
+  IconUser,
+} from "@tabler/icons-react"
+import { AspectRatioPicker } from "@/components/studio/aspect-ratio-picker"
+import { BackgroundControls } from "@/components/studio/background-controls"
+import { SocialPlatformIcon } from "@/components/studio/social-platform-icon"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
+import { Slider } from "@/components/ui/slider"
+import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { SOCIAL_PLATFORM_LIST, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
+import type {
+  BorderStyle,
+  BrowserChromeStyle,
+  ChromeTheme,
+  SocialCardStyle,
+  StudioMode,
+  StudioState,
+  WebLayoutStyle,
+} from "@/lib/studio-types"
+import { cn } from "@/lib/utils"
+
+function BorderCornerGlyph({ variant }: { variant: BorderStyle }) {
+  const d =
+    variant === "sharp"
+      ? "M 5 17 V 5 H 17"
+      : variant === "curved"
+        ? "M 5 17 V 9 Q 5 5 9 5 H 17"
+        : "M 5 17 V 12 C 5 7 7 5 12 5 H 17"
+  return (
+    <svg
+      viewBox="0 0 22 22"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={d} />
+    </svg>
+  )
+}
+
+const BORDER_OPTIONS: Array<{ id: BorderStyle; label: string }> = [
+  { id: "sharp", label: "Sharp" },
+  { id: "curved", label: "Curved" },
+  { id: "round", label: "Round" },
+]
+
+export function ControlSidebar({
+  state,
+  isFetching,
+  copiedImage,
+  onChange,
+  onFetchUrl,
+  onOpenExport,
+  onQuickCopy,
+}: {
+  state: StudioState
+  isFetching: boolean
+  copiedImage: boolean
+  onChange: (patch: Partial<StudioState>) => void
+  onFetchUrl: (urlOverride?: string) => void
+  onOpenExport: () => void
+  onQuickCopy: () => void
+}) {
+  const [frameSectionOpen, setFrameSectionOpen] = React.useState(true)
+  const screenshotInputRef = React.useRef<HTMLInputElement>(null)
+  const avatarInputRef = React.useRef<HTMLInputElement>(null)
+  const coverInputRef = React.useRef<HTMLInputElement>(null)
+
+  const handleDataUrlUpload = (
+    file: File | undefined,
+    field: "customScreenshotUrl" | "socialAvatarUrl" | "socialCoverUrl"
+  ) => {
+    if (!file || !file.type.startsWith("image/")) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        onChange({ [field]: reader.result } as Partial<StudioState>)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  return (
+    <aside className="flex h-full w-full flex-col gap-3 md:w-[320px] md:shrink-0 lg:w-[332px]">
+      {/* Top floating Web | Social mode tray matching uploaded mockup */}
+      <div className="rounded-2xl border border-border/80 bg-card p-1.5 shadow-sm">
+        <Tabs
+          value={state.mode}
+          onValueChange={(val) => onChange({ mode: val as StudioMode })}
+        >
+          <TabsList className="h-9 w-full rounded-xl bg-transparent p-0">
+            <TabsTrigger
+              value="web"
+              className="h-9 rounded-xl font-medium data-active:bg-muted/80 data-active:text-foreground dark:data-active:bg-secondary"
+            >
+              Web
+            </TabsTrigger>
+            <TabsTrigger
+              value="social"
+              className="h-9 rounded-xl font-medium data-active:bg-muted/80 data-active:text-foreground dark:data-active:bg-secondary"
+            >
+              Social
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* Main controls card */}
+      <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border/80 bg-card shadow-sm">
+        <ScrollArea className="flex-1">
+          <div className="space-y-4 p-3.5">
+            {/* URL Input Row matching uploaded mockup */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                onFetchUrl()
+              }}
+              className="flex items-center gap-2"
+            >
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      size="icon"
+                      disabled={isFetching}
+                      aria-label="Fetch link preview"
+                      className="size-10 shrink-0 rounded-xl border border-border/70 bg-background/70"
+                    />
+                  }
+                >
+                  {isFetching ? <Spinner /> : <IconLink className="size-4" />}
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  Fetch live title, metadata & preview
+                </TooltipContent>
+              </Tooltip>
+
+              <Input
+                value={state.url}
+                onChange={(e) => onChange({ url: e.target.value })}
+                placeholder={
+                  state.mode === "web" ? "www.lerhem.space" : "x.com/lerhem"
+                }
+                className="h-10 rounded-xl border-border/80 bg-background/60 px-3 text-sm"
+                aria-label="Target website or social URL"
+              />
+            </form>
+
+            {/* Aspect Ratio Selector */}
+            <AspectRatioPicker state={state} onChange={onChange} />
+
+            {/* Background Controls */}
+            <BackgroundControls state={state} onChange={onChange} />
+
+            {/* Border Radius Selector matching uploaded mockup */}
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                Border
+              </div>
+              <div className="grid grid-cols-3 gap-1 rounded-xl border border-border/80 bg-background/50 p-1">
+                {BORDER_OPTIONS.map((opt) => {
+                  const active = state.borderStyle === opt.id
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onChange({ borderStyle: opt.id })}
+                      className={cn(
+                        "flex flex-col items-center justify-center gap-1 rounded-lg py-2 text-[11px] font-medium transition-all",
+                        active
+                          ? "bg-card text-foreground shadow-xs ring-1 ring-border"
+                          : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                      )}
+                    >
+                      <BorderCornerGlyph variant={opt.id} />
+                      <span>{opt.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <Separator className="opacity-60" />
+
+            {/* Mode-Specific Frame & Content Section */}
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => setFrameSectionOpen((v) => !v)}
+                className="flex w-full items-center justify-between text-left"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                  <IconAdjustments className="size-3.5" />
+                  {state.mode === "web" ? "Browser Frame" : "Social Card"}
+                </span>
+                <IconChevronDown
+                  className={cn(
+                    "size-4 text-muted-foreground transition-transform",
+                    frameSectionOpen && "rotate-180"
+                  )}
+                />
+              </button>
+
+              {frameSectionOpen && state.mode === "web" && (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Layout
+                    </Label>
+                    <div className="grid grid-cols-4 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {(
+                        [
+                          { id: "offset", label: "Offset" },
+                          { id: "centered", label: "Center" },
+                          { id: "docked", label: "Docked" },
+                          { id: "floating", label: "Float" },
+                        ] as Array<{ id: WebLayoutStyle; label: string }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => onChange({ webLayout: opt.id })}
+                          className={cn(
+                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                            state.webLayout === opt.id
+                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Window Chrome
+                    </Label>
+                    <div className="grid grid-cols-5 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {(
+                        [
+                          { id: "chrome", label: "Chrome" },
+                          { id: "safari", label: "Safari" },
+                          { id: "arc", label: "Arc" },
+                          { id: "minimal", label: "Min" },
+                          { id: "none", label: "None" },
+                        ] as Array<{ id: BrowserChromeStyle; label: string }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => onChange({ browserChrome: opt.id })}
+                          className={cn(
+                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                            state.browserChrome === opt.id
+                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Chrome Theme
+                    </Label>
+                    <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {(["light", "dark", "glass"] as ChromeTheme[]).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => onChange({ chromeTheme: t })}
+                          className={cn(
+                            "rounded-lg py-1.5 text-[11px] font-medium capitalize transition-colors",
+                            state.chromeTheme === t
+                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>Scale</span>
+                        <span className="font-mono">{state.frameScale}%</span>
+                      </div>
+                      <Slider
+                        min={70}
+                        max={115}
+                        step={1}
+                        value={[state.frameScale]}
+                        onValueChange={(v) =>
+                          onChange({
+                            frameScale: Array.isArray(v) ? (v[0] ?? 100) : v,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>Shadow</span>
+                        <span className="font-mono">{state.frameShadow}%</span>
+                      </div>
+                      <Slider
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={[state.frameShadow]}
+                        onValueChange={(v) =>
+                          onChange({
+                            frameShadow: Array.isArray(v) ? (v[0] ?? 65) : v,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <input
+                      ref={screenshotInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) =>
+                        handleDataUrlUpload(
+                          e.target.files?.[0],
+                          "customScreenshotUrl"
+                        )
+                      }
+                    />
+                    <div className="flex gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 text-xs"
+                        onClick={() => screenshotInputRef.current?.click()}
+                      >
+                        <IconPhotoUp />
+                        {state.customScreenshotUrl
+                          ? "Replace Screenshot"
+                          : "Upload Screenshot"}
+                      </Button>
+                      {state.customScreenshotUrl && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => onChange({ customScreenshotUrl: "" })}
+                          aria-label="Clear custom screenshot"
+                        >
+                          <IconTrash />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {frameSectionOpen && state.mode === "social" && (
+                <div className="space-y-3">
+                  {/* Platform Picker */}
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Platform
+                    </Label>
+                    <div className="grid grid-cols-5 gap-1">
+                      {SOCIAL_PLATFORM_LIST.slice(0, 10).map((p) => {
+                        const active = state.socialPlatform === p.id
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            title={p.name}
+                            onClick={() =>
+                              onChange({
+                                socialPlatform: p.id,
+                                socialCtaLabel: p.defaultCta,
+                              })
+                            }
+                            className={cn(
+                              "flex h-8 items-center justify-center rounded-lg border transition-colors",
+                              active
+                                ? "border-primary bg-primary/15 text-foreground"
+                                : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            <SocialPlatformIcon
+                              platform={p.id}
+                              className="size-4"
+                            />
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Card Style */}
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Card Style
+                    </Label>
+                    <div className="grid grid-cols-5 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {(
+                        [
+                          { id: "elevated", label: "Split" },
+                          { id: "glass", label: "Cover" },
+                          { id: "bento", label: "Bento" },
+                          { id: "browser", label: "Web" },
+                          { id: "pill", label: "Pill" },
+                        ] as Array<{ id: SocialCardStyle; label: string }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => onChange({ socialCardStyle: opt.id })}
+                          className={cn(
+                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                            state.socialCardStyle === opt.id
+                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Card Theme */}
+                  <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                    {(["dark", "light", "glass"] as ChromeTheme[]).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => onChange({ socialCardTheme: t })}
+                        className={cn(
+                          "rounded-lg py-1.5 text-[11px] font-medium capitalize transition-colors",
+                          state.socialCardTheme === t
+                            ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">
+                        Name
+                      </Label>
+                      <Input
+                        value={state.socialDisplayName}
+                        onChange={(e) =>
+                          onChange({ socialDisplayName: e.target.value })
+                        }
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">
+                        Handle
+                      </Label>
+                      <Input
+                        value={state.socialHandle}
+                        onChange={(e) =>
+                          onChange({ socialHandle: e.target.value })
+                        }
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Description
+                    </Label>
+                    <Textarea
+                      value={state.socialBio}
+                      onChange={(e) => onChange({ socialBio: e.target.value })}
+                      rows={2}
+                      className="min-h-14 text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">
+                        Metrics
+                      </Label>
+                      <Input
+                        value={state.socialMetrics}
+                        onChange={(e) =>
+                          onChange({ socialMetrics: e.target.value })
+                        }
+                        placeholder="4.9 Rating · 125 Posts · 12.4K Followers"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">
+                        CTA Label
+                      </Label>
+                      <Input
+                        value={state.socialCtaLabel}
+                        onChange={(e) =>
+                          onChange({ socialCtaLabel: e.target.value })
+                        }
+                        placeholder={
+                          SOCIAL_PLATFORMS[state.socialPlatform]?.defaultCta ??
+                          "Get in Touch"
+                        }
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Avatar & Cover photo upload */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <input
+                        ref={avatarInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) =>
+                          handleDataUrlUpload(
+                            e.target.files?.[0],
+                            "socialAvatarUrl"
+                          )
+                        }
+                      />
+                      <div className="flex gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="min-w-0 flex-1 px-2 text-xs"
+                          onClick={() => avatarInputRef.current?.click()}
+                        >
+                          <IconUser className="shrink-0" />
+                          <span className="truncate">
+                            {state.socialAvatarUrl ? "Avatar" : "Upload Avatar"}
+                          </span>
+                        </Button>
+                        {state.socialAvatarUrl && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => onChange({ socialAvatarUrl: "" })}
+                            aria-label="Clear custom avatar"
+                          >
+                            <IconTrash />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <input
+                        ref={coverInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) =>
+                          handleDataUrlUpload(
+                            e.target.files?.[0],
+                            "socialCoverUrl"
+                          )
+                        }
+                      />
+                      <div className="flex gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="min-w-0 flex-1 px-2 text-xs"
+                          onClick={() => coverInputRef.current?.click()}
+                        >
+                          <IconPhoto className="shrink-0" />
+                          <span className="truncate">
+                            {state.socialCoverUrl ? "Cover" : "Upload Cover"}
+                          </span>
+                        </Button>
+                        {state.socialCoverUrl && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => onChange({ socialCoverUrl: "" })}
+                            aria-label="Clear custom cover photo"
+                          >
+                            <IconTrash />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-0.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Verified Badge
+                    </Label>
+                    <Switch
+                      checked={state.socialVerified}
+                      onCheckedChange={(checked) =>
+                        onChange({ socialVerified: checked })
+                      }
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-muted-foreground">
+                      Scannable QR Code
+                    </Label>
+                    <Switch
+                      checked={state.socialShowQr}
+                      onCheckedChange={(checked) =>
+                        onChange({ socialShowQr: checked })
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </ScrollArea>
+
+        {/* Bottom sticky Export + Quick Copy bar matching uploaded mockup */}
+        <div className="flex items-center gap-2 border-t border-border/70 p-3">
+          <Button
+            type="button"
+            variant="default"
+            onClick={onOpenExport}
+            className="h-10 flex-1 rounded-xl font-heading text-sm font-semibold shadow-sm"
+          >
+            Export
+          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="default"
+                  size="icon-lg"
+                  onClick={onQuickCopy}
+                  aria-label="Copy PNG to clipboard"
+                  className="size-10 shrink-0 rounded-xl shadow-sm"
+                />
+              }
+            >
+              {copiedImage ? (
+                <IconCheck className="size-4" />
+              ) : (
+                <IconCopy className="size-4" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="top">Copy PNG to clipboard</TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
+    </aside>
+  )
+}
