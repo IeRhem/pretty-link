@@ -1,4 +1,8 @@
 import { parseSocialStats } from "@/components/studio/social-mockup-card"
+import {
+  hexToTintRgba,
+  resolveTabAccentColor,
+} from "@/components/studio/web-mockup-card"
 import { resolveAspectDimensions } from "@/lib/presets"
 import { generateQrMatrix } from "@/lib/qr"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
@@ -258,6 +262,128 @@ function drawQrOnCanvas(
   ctx.restore()
 }
 
+function drawPatternOverlay(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  if (!state.bgPattern || state.bgPattern === "none") return
+
+  const scaleFactor = Math.min(width, height) / 500
+  const alpha = Math.max(0, Math.min(1, (state.bgPatternOpacity ?? 22) / 100))
+
+  ctx.save()
+  ctx.globalAlpha = alpha
+
+  if (state.bgPattern === "dots") {
+    const step = 18 * scaleFactor
+    const r = 1.35 * scaleFactor
+    ctx.fillStyle = "#FFFFFF"
+    for (let y = step / 2; y < height + step; y += step) {
+      for (let x = step / 2; x < width + step; x += step) {
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  } else if (state.bgPattern === "grid") {
+    const step = 28 * scaleFactor
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)"
+    ctx.lineWidth = Math.max(1, scaleFactor)
+    ctx.beginPath()
+    for (let x = 0; x <= width; x += step) {
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+    }
+    for (let y = 0; y <= height; y += step) {
+      ctx.moveTo(0, y)
+      ctx.lineTo(width, y)
+    }
+    ctx.stroke()
+  } else if (state.bgPattern === "diagonal") {
+    const cStep = 16 * scaleFactor * Math.SQRT2
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)"
+    ctx.lineWidth = Math.max(1, scaleFactor)
+    ctx.beginPath()
+    for (let c = 0; c <= width + height; c += cStep) {
+      ctx.moveTo(c, 0)
+      ctx.lineTo(c - height, height)
+    }
+    ctx.stroke()
+  } else if (state.bgPattern === "cross") {
+    const step = 28 * scaleFactor
+    const arm = 5 * scaleFactor
+    ctx.strokeStyle = "#FFFFFF"
+    ctx.lineWidth = Math.max(1, 1.5 * scaleFactor)
+    ctx.lineCap = "round"
+    ctx.beginPath()
+    for (let y = step / 2; y < height + step; y += step) {
+      for (let x = step / 2; x < width + step; x += step) {
+        ctx.moveTo(x, y - arm)
+        ctx.lineTo(x, y + arm)
+        ctx.moveTo(x - arm, y)
+        ctx.lineTo(x + arm, y)
+      }
+    }
+    ctx.stroke()
+  } else if (state.bgPattern === "rings") {
+    const cx = width / 2
+    const cy = height / 2
+    const ringStep = 55 * scaleFactor
+    ctx.strokeStyle = "#FFFFFF"
+    ctx.lineWidth = Math.max(1, 1.25 * scaleFactor)
+    for (let i = 1; i <= 8; i++) {
+      ctx.beginPath()
+      ctx.arc(cx, cy, ringStep * i, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+  } else if (state.bgPattern === "diamond") {
+    const cStep = 20 * scaleFactor * Math.SQRT2
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.75)"
+    ctx.lineWidth = Math.max(1, scaleFactor)
+    ctx.beginPath()
+    for (let c = 0; c <= width + height; c += cStep) {
+      ctx.moveTo(c, 0)
+      ctx.lineTo(c - height, height)
+    }
+    for (let c = -height; c <= width; c += cStep) {
+      ctx.moveTo(c, 0)
+      ctx.lineTo(c + height, height)
+    }
+    ctx.stroke()
+  } else if (state.bgPattern === "spotlight") {
+    const maxDim = Math.max(width, height)
+    const g1 = ctx.createRadialGradient(
+      width * 0.2,
+      height * 0.2,
+      0,
+      width * 0.2,
+      height * 0.2,
+      maxDim * 0.55
+    )
+    g1.addColorStop(0, "rgba(255, 255, 255, 0.85)")
+    g1.addColorStop(1, "rgba(255, 255, 255, 0)")
+    ctx.fillStyle = g1
+    ctx.fillRect(0, 0, width, height)
+
+    const g2 = ctx.createRadialGradient(
+      width * 0.82,
+      height * 0.78,
+      0,
+      width * 0.82,
+      height * 0.78,
+      maxDim * 0.58
+    )
+    g2.addColorStop(0, "rgba(255, 255, 255, 0.65)")
+    g2.addColorStop(1, "rgba(255, 255, 255, 0)")
+    ctx.fillStyle = g2
+    ctx.fillRect(0, 0, width, height)
+  }
+
+  ctx.restore()
+}
+
 async function drawBackground(
   ctx: CanvasRenderingContext2D,
   state: StudioState,
@@ -300,6 +426,7 @@ async function drawBackground(
     if (state.noiseOverlay) {
       drawNoiseOverlay(ctx, width, height)
     }
+    drawPatternOverlay(ctx, state, width, height)
     return
   }
 
@@ -333,14 +460,569 @@ async function drawBackground(
     ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(0.85, state.bgDim / 100)})`
     ctx.fillRect(0, 0, width, height)
   }
+
+  drawPatternOverlay(ctx, state, width, height)
+}
+
+function getResolvedFont(
+  varName: "--font-heading" | "--font-sans",
+  fallback: string
+): string {
+  if (typeof document === "undefined") return fallback
+  const val = getComputedStyle(document.documentElement)
+    .getPropertyValue(varName)
+    .trim()
+  return val || fallback
+}
+
+function drawDefaultBrandIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  accentColor: string,
+  monochrome = false
+) {
+  const badgeFill = monochrome
+    ? "rgba(255, 255, 255, 0.22)"
+    : hexToTintRgba(accentColor, 0.16)
+  const backFacet = monochrome
+    ? "rgba(255, 255, 255, 0.36)"
+    : hexToTintRgba(accentColor, 0.48)
+  const frontFacet = monochrome ? "rgba(255, 255, 255, 0.72)" : accentColor
+
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(size / 100, size / 100)
+
+  roundedRectPath(ctx, 8, 8, 84, 84, 24)
+  ctx.fillStyle = badgeFill
+  ctx.fill()
+
+  roundedRectPath(ctx, 27, 27, 33, 33, 10)
+  ctx.fillStyle = backFacet
+  ctx.fill()
+
+  roundedRectPath(ctx, 40, 40, 33, 33, 10)
+  ctx.fillStyle = frontFacet
+  ctx.fill()
+
+  roundedRectPath(ctx, 45, 45, 10, 10, 3.5)
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)"
+  ctx.fill()
+
+  ctx.restore()
+}
+
+function drawContainedImage(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+) {
+  const ratio = img.naturalWidth / Math.max(1, img.naturalHeight)
+  let dw = w
+  let dh = h
+  if (ratio > w / Math.max(1, h)) {
+    dh = w / ratio
+  } else {
+    dw = h * ratio
+  }
+  const dx = x + (w - dw) / 2
+  const dy = y + (h - dh) / 2
+  ctx.drawImage(img, dx, dy, dw, dh)
+}
+
+function drawPosterOverlays(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number,
+  faviconImg: HTMLImageElement | null
+) {
+  if (!state.showCornerIcon && !state.showPosterHeader && !state.showPosterFooter) {
+    return
+  }
+
+  const minDim = Math.min(width, height)
+  const scaleFactor = minDim / 500
+  const accentColor = resolveTabAccentColor(state)
+
+  if (state.showCornerIcon) {
+    const cornerSize = Math.round(46 * scaleFactor)
+    const cy = Math.round(height * 0.055)
+    let cx = Math.round(width * 0.075)
+    if (state.cornerIconPosition === "top-center") {
+      cx = Math.round(width / 2 - cornerSize / 2)
+    } else if (state.cornerIconPosition === "top-right") {
+      cx = Math.round(width * (1 - 0.075) - cornerSize)
+    }
+    if (faviconImg) {
+      ctx.save()
+      ctx.globalAlpha = 0.42
+      ctx.filter = "brightness(1.25)"
+      drawContainedImage(ctx, faviconImg, cx, cy, cornerSize, cornerSize)
+      ctx.restore()
+    } else {
+      drawDefaultBrandIcon(ctx, cx, cy, cornerSize, accentColor, true)
+    }
+  }
+
+  if (state.showPosterHeader) {
+    const leftX = Math.round(width * 0.08)
+    const rightX = Math.round(width * (1 - 0.08))
+    const topY = Math.round(height * 0.17)
+    const headlineScale = (state.posterHeadlineSize ?? 100) / 100
+    const fontSize = Math.round(42 * scaleFactor * headlineScale)
+    const lineHeight = fontSize * 1.08
+    const lines = state.posterHeadline.split("\n")
+    const hasAccent = Boolean(state.posterAccentText.trim())
+
+    const headingFont = getResolvedFont(
+      "--font-heading",
+      '"Instrument Sans", "DM Sans", sans-serif'
+    )
+    ctx.save()
+    ctx.font = `500 ${fontSize}px ${headingFont}`
+    ctx.textBaseline = "top"
+    if ("letterSpacing" in ctx) {
+      ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(-0.03 * fontSize).toFixed(2)}px`
+    }
+
+    lines.forEach((line, idx) => {
+      const y = topY + idx * lineHeight
+      const isLast = idx === lines.length - 1
+      if (isLast && hasAccent) {
+        const prefix = line ? `${line} ` : ""
+        const accentPart = state.posterAccentText
+        const w1 = ctx.measureText(prefix).width
+        const w2 = ctx.measureText(accentPart).width
+        const totalW = w1 + w2
+        let startX = leftX
+        if (state.posterHeadlineAlign === "center") {
+          startX = width / 2 - totalW / 2
+        } else if (state.posterHeadlineAlign === "right") {
+          startX = rightX - totalW
+        }
+        ctx.textAlign = "left"
+        ctx.fillStyle = "#FFFFFF"
+        ctx.fillText(prefix, startX, y)
+        ctx.fillStyle = "rgba(255, 255, 255, 0.5)"
+        ctx.fillText(accentPart, startX + w1, y)
+      } else {
+        ctx.fillStyle = "#FFFFFF"
+        if (state.posterHeadlineAlign === "left") {
+          ctx.textAlign = "left"
+          ctx.fillText(line, leftX, y)
+        } else if (state.posterHeadlineAlign === "center") {
+          ctx.textAlign = "center"
+          ctx.fillText(line, width / 2, y)
+        } else {
+          ctx.textAlign = "right"
+          ctx.fillText(line, rightX, y)
+        }
+      }
+    })
+    ctx.restore()
+  }
+
+  if (state.showPosterFooter) {
+    const bottomY = height * (1 - 0.045)
+    const titleSize = Math.round(14 * scaleFactor)
+    const subSize = Math.round(10.5 * scaleFactor)
+    const gap = Math.round(2 * scaleFactor)
+
+    ctx.save()
+    ctx.textAlign = "center"
+    ctx.textBaseline = "bottom"
+    let cursorBottom = bottomY
+
+    if (state.posterFooterSubtitle) {
+      const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+      ctx.font = `500 ${subSize}px ${sansFont}`
+      ctx.fillStyle = "rgba(255, 255, 255, 0.75)"
+      ctx.fillText(state.posterFooterSubtitle, width / 2, cursorBottom)
+      cursorBottom -= subSize * 1.25 + gap
+    }
+
+    if (state.posterFooterTitle) {
+      const headingFont = getResolvedFont(
+        "--font-heading",
+        '"Instrument Sans", sans-serif'
+      )
+      ctx.font = `700 ${titleSize}px ${headingFont}`
+      if ("letterSpacing" in ctx) {
+        ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.06 * titleSize).toFixed(2)}px`
+      }
+      ctx.fillStyle = "#FFFFFF"
+      ctx.fillText(state.posterFooterTitle, width / 2, cursorBottom)
+    }
+    ctx.restore()
+  }
+}
+
+function drawWebTabShowcase(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number,
+  faviconImg: HTMLImageElement | null
+) {
+  const minDim = Math.min(width, height)
+  const userScale = state.frameScale / 100
+  const uiScale = (minDim / 500) * userScale
+  const displayUrl = formatDisplayUrl(state.url)
+  const isDefaultLerhem = displayUrl.toLowerCase().includes("lerhem.space")
+  const accentColor = resolveTabAccentColor(state)
+
+  const isDarkChrome = state.chromeTheme === "dark"
+  const isGlassChrome = state.chromeTheme === "glass"
+  const stripBg = isDarkChrome
+    ? "#0D0D10"
+    : isGlassChrome
+      ? "rgba(20, 20, 24, 0.84)"
+      : "#141418"
+  const tabBg = isDarkChrome
+    ? "#18181B"
+    : isGlassChrome
+      ? "rgba(255, 255, 255, 0.95)"
+      : "#FFFFFF"
+
+  const fw = Math.round(width * 0.88 * userScale)
+  const tabBarH = Math.round(46 * uiScale)
+  const navBarH = Math.round(58 * uiScale)
+  const fh = tabBarH + navBarH
+  const fx = Math.round(
+    width * (0.5 + (state.frameOffsetX ?? 0) / 100) - fw / 2
+  )
+  const fy = Math.round(
+    height * (0.56 + (state.frameOffsetY ?? 0) / 100) - fh / 2
+  )
+  const frameR = Math.round(20 * uiScale)
+  const radii: [number, number, number, number] = [
+    frameR,
+    frameR,
+    frameR,
+    frameR,
+  ]
+
+  // Drop shadow
+  if (state.frameShadow > 0) {
+    ctx.save()
+    ctx.shadowColor = `rgba(9, 9, 14, ${0.14 + (state.frameShadow / 100) * 0.44})`
+    ctx.shadowBlur = Math.round(44 * uiScale * (state.frameShadow / 100))
+    ctx.shadowOffsetY = Math.round(20 * uiScale * (state.frameShadow / 100))
+    roundedRectPath(ctx, fx, fy, fw, fh, radii)
+    ctx.fillStyle = "#111114"
+    ctx.fill()
+    ctx.restore()
+  }
+
+  ctx.save()
+  roundedRectPath(ctx, fx, fy, fw, fh, radii)
+  ctx.clip()
+
+  // Top dark tab strip
+  ctx.fillStyle = stripBg
+  ctx.fillRect(fx, fy, fw, tabBarH)
+
+  // 3 window dots
+  const padX = Math.round(16 * uiScale)
+  const dotSize = Math.round(10 * uiScale)
+  const dotR = dotSize / 2
+  const dotGap = Math.round(6 * uiScale)
+  const tabH = Math.round(38 * uiScale)
+  const tabY = fy + tabBarH - tabH
+  const dotCy = tabY + tabH / 2
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath()
+    ctx.arc(
+      fx + padX + dotR + i * (dotSize + dotGap),
+      dotCy,
+      dotR,
+      0,
+      Math.PI * 2
+    )
+    ctx.fillStyle = "#52525B"
+    ctx.fill()
+  }
+
+  const dotsEndX = fx + padX + 3 * dotSize + 2 * dotGap
+
+  // Active tab dimensions
+  const tabX = dotsEndX + Math.round(14 * uiScale)
+  const tabR = Math.round(12 * uiScale)
+  const filletSize = Math.round(8 * uiScale)
+  const tabPadX = Math.round(12 * uiScale)
+  const tabGap = Math.round(8 * uiScale)
+  const iconSize = Math.round(18 * uiScale)
+  const closeSize = Math.round(18 * uiScale)
+
+  const tabTitleText =
+    state.tabTitle.trim() ||
+    state.metadata?.siteName ||
+    (isDefaultLerhem ? "Lerhem Studio" : displayUrl)
+
+  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+  const titleFontSize = Math.round(13 * uiScale)
+  ctx.font = `600 ${titleFontSize}px ${sansFont}`
+  const plusSpace = Math.round(36 * uiScale)
+  const maxAllowedTabW = Math.max(
+    80,
+    fx + fw - padX - plusSpace - tabX
+  )
+  const maxTitleW = Math.min(
+    Math.round(180 * uiScale),
+    Math.max(40, maxAllowedTabW - tabPadX * 2 - iconSize - closeSize - tabGap * 2)
+  )
+  const measuredTitleW = Math.min(ctx.measureText(tabTitleText).width, maxTitleW)
+  const tabW =
+    tabPadX + iconSize + tabGap + measuredTitleW + tabGap + closeSize + tabPadX
+
+  // Active tab fill
+  roundedRectPath(ctx, tabX, tabY, tabW, tabH, [tabR, tabR, 0, 0])
+  ctx.fillStyle = tabBg
+  ctx.fill()
+
+  // Left concave fillet
+  ctx.beginPath()
+  ctx.moveTo(tabX, fy + tabBarH - filletSize)
+  ctx.lineTo(tabX, fy + tabBarH)
+  ctx.lineTo(tabX - filletSize, fy + tabBarH)
+  ctx.arc(
+    tabX - filletSize,
+    fy + tabBarH - filletSize,
+    filletSize,
+    Math.PI / 2,
+    0,
+    true
+  )
+  ctx.closePath()
+  ctx.fillStyle = tabBg
+  ctx.fill()
+
+  // Right concave fillet
+  ctx.beginPath()
+  ctx.moveTo(tabX + tabW, fy + tabBarH - filletSize)
+  ctx.lineTo(tabX + tabW, fy + tabBarH)
+  ctx.lineTo(tabX + tabW + filletSize, fy + tabBarH)
+  ctx.arc(
+    tabX + tabW + filletSize,
+    fy + tabBarH - filletSize,
+    filletSize,
+    Math.PI / 2,
+    Math.PI,
+    false
+  )
+  ctx.closePath()
+  ctx.fillStyle = tabBg
+  ctx.fill()
+
+  // Tab favicon / brand mark
+  const iconX = tabX + tabPadX
+  const iconY = tabY + (tabH - iconSize) / 2
+  if (faviconImg) {
+    drawContainedImage(ctx, faviconImg, iconX, iconY, iconSize, iconSize)
+  } else {
+    drawDefaultBrandIcon(ctx, iconX, iconY, iconSize, accentColor, false)
+  }
+
+  // Tab title
+  ctx.fillStyle = isDarkChrome ? "#F4F4F5" : "#18181B"
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  ctx.fillText(
+    tabTitleText,
+    iconX + iconSize + tabGap,
+    tabY + tabH / 2 + 0.5,
+    maxTitleW
+  )
+
+  // Close x button
+  const closeCx = tabX + tabW - tabPadX - closeSize / 2
+  const closeCy = tabY + tabH / 2
+  const closeHalf = Math.round(11 * uiScale) * 0.28
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(closeCx, closeCy, closeSize / 2, 0, Math.PI * 2)
+  ctx.fillStyle = isDarkChrome
+    ? "rgba(255, 255, 255, 0.1)"
+    : "rgba(0, 0, 0, 0.06)"
+  ctx.fill()
+  ctx.strokeStyle = isDarkChrome ? "#E4E4E7" : "#27272A"
+  ctx.lineWidth = Math.max(1.2, 1.9 * uiScale)
+  ctx.lineCap = "round"
+  ctx.beginPath()
+  ctx.moveTo(closeCx - closeHalf, closeCy - closeHalf)
+  ctx.lineTo(closeCx + closeHalf, closeCy + closeHalf)
+  ctx.moveTo(closeCx + closeHalf, closeCy - closeHalf)
+  ctx.lineTo(closeCx - closeHalf, closeCy + closeHalf)
+  ctx.stroke()
+  ctx.restore()
+
+  // New tab + button
+  const plusBtnSize = Math.round(22 * uiScale)
+  const plusCx = tabX + tabW + Math.round(10 * uiScale) + plusBtnSize / 2
+  const plusCy = tabY + tabH / 2
+  const plusHalf = Math.round(13 * uiScale) * 0.34
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(plusCx, plusCy, plusBtnSize / 2, 0, Math.PI * 2)
+  ctx.fillStyle = "rgba(255, 255, 255, 0.12)"
+  ctx.fill()
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)"
+  ctx.lineWidth = Math.max(1.2, 1.9 * uiScale)
+  ctx.lineCap = "round"
+  ctx.beginPath()
+  ctx.moveTo(plusCx - plusHalf, plusCy)
+  ctx.lineTo(plusCx + plusHalf, plusCy)
+  ctx.moveTo(plusCx, plusCy - plusHalf)
+  ctx.lineTo(plusCx, plusCy + plusHalf)
+  ctx.stroke()
+  ctx.restore()
+
+  // Bottom address bar
+  const navY = fy + tabBarH
+  ctx.fillStyle = tabBg
+  ctx.fillRect(fx, navY, fw, navBarH)
+
+  const navPadX = Math.round(14 * uiScale)
+  const barGap = Math.round(10 * uiScale)
+  let pillX = fx + navPadX
+
+  if (state.showNavButtons) {
+    const navIconSize = Math.round(16 * uiScale)
+    const navGap = Math.round(6 * uiScale)
+    const navColor = isDarkChrome ? "#E4E4E7" : "#18181B"
+    const navCy = navY + navBarH / 2
+    const s = navIconSize * 0.3
+
+    ctx.strokeStyle = navColor
+    ctx.lineWidth = Math.max(1.3, 1.8 * uiScale)
+    ctx.lineCap = "round"
+    ctx.lineJoin = "round"
+
+    // Back <
+    const ic1 = fx + navPadX + navIconSize / 2
+    ctx.save()
+    ctx.globalAlpha = 0.75
+    ctx.beginPath()
+    ctx.moveTo(ic1 + s * 0.35, navCy - s)
+    ctx.lineTo(ic1 - s * 0.45, navCy)
+    ctx.lineTo(ic1 + s * 0.35, navCy + s)
+    ctx.stroke()
+    ctx.restore()
+
+    // Forward >
+    const ic2 = ic1 + navIconSize + navGap
+    ctx.save()
+    ctx.globalAlpha = 0.3
+    ctx.beginPath()
+    ctx.moveTo(ic2 - s * 0.35, navCy - s)
+    ctx.lineTo(ic2 + s * 0.45, navCy)
+    ctx.lineTo(ic2 - s * 0.35, navCy + s)
+    ctx.stroke()
+    ctx.restore()
+
+    pillX = fx + navPadX + navIconSize * 2 + navGap + barGap
+  }
+
+  // Full-width tinted URL pill
+  const pillH = Math.round(38 * uiScale)
+  const pillY = navY + (navBarH - pillH) / 2
+  const pillW = Math.max(80, fx + fw - navPadX - pillX)
+  const pillR = Math.round(12 * uiScale)
+
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillR)
+  ctx.fillStyle = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)
+  ctx.fill()
+  ctx.lineWidth = Math.max(1, uiScale)
+  ctx.strokeStyle = hexToTintRgba(accentColor, isDarkChrome ? 0.28 : 0.18)
+  ctx.stroke()
+
+  // Solid padlock icon
+  const pillInnerPad = Math.round(12 * uiScale)
+  const pillGap = Math.round(8 * uiScale)
+  const lockSize = Math.round(14 * uiScale)
+  const lockX = pillX + pillInnerPad
+  const lockY = pillY + (pillH - lockSize) / 2
+  const ls = lockSize / 24
+  ctx.save()
+  ctx.translate(lockX, lockY)
+  ctx.scale(ls, ls)
+  ctx.strokeStyle = accentColor
+  ctx.lineWidth = 2.4
+  ctx.lineCap = "round"
+  ctx.beginPath()
+  ctx.moveTo(7.5, 10)
+  ctx.lineTo(7.5, 7.5)
+  ctx.arc(12, 7.5, 4.5, Math.PI, 0, false)
+  ctx.lineTo(16.5, 10)
+  ctx.stroke()
+  roundedRectPath(ctx, 4.5, 9.5, 15, 11.5, 3.2)
+  ctx.fillStyle = accentColor
+  ctx.fill()
+  ctx.restore()
+
+  // Right-side external arrow icon
+  const arrowSize = Math.round(14 * uiScale)
+  const arrowCx = pillX + pillW - pillInnerPad - arrowSize / 2
+  const arrowCy = pillY + pillH / 2
+  const as = arrowSize * 0.28
+  ctx.save()
+  ctx.globalAlpha = 0.7
+  ctx.strokeStyle = accentColor
+  ctx.lineWidth = Math.max(1.2, 1.8 * uiScale)
+  ctx.lineCap = "round"
+  ctx.lineJoin = "round"
+  ctx.beginPath()
+  ctx.moveTo(arrowCx - as, arrowCy + as)
+  ctx.lineTo(arrowCx + as, arrowCy - as)
+  ctx.moveTo(arrowCx - as * 0.2, arrowCy - as)
+  ctx.lineTo(arrowCx + as, arrowCy - as)
+  ctx.lineTo(arrowCx + as, arrowCy + as * 0.2)
+  ctx.stroke()
+  ctx.restore()
+
+  // Full readable URL text
+  const urlFontSize = Math.round(14.5 * uiScale)
+  const urlStartX = lockX + lockSize + pillGap
+  const maxUrlW = Math.max(
+    30,
+    arrowCx - arrowSize / 2 - pillGap - urlStartX
+  )
+  ctx.font = `500 ${urlFontSize}px ${sansFont}`
+  ctx.fillStyle = accentColor
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  if ("letterSpacing" in ctx) {
+    ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(-0.01 * urlFontSize).toFixed(2)}px`
+  }
+  ctx.fillText(displayUrl, urlStartX, pillY + pillH / 2 + 0.5, maxUrlW)
+
+  // Subtle outer frame border ring
+  ctx.lineWidth = Math.max(1, uiScale)
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.1)"
+  roundedRectPath(ctx, fx, fy, fw, fh, radii)
+  ctx.stroke()
+
+  ctx.restore()
 }
 
 async function drawWebMode(
   ctx: CanvasRenderingContext2D,
   state: StudioState,
   width: number,
-  height: number
+  height: number,
+  faviconImg: HTMLImageElement | null
 ) {
+  if (state.webLayout === "tab") {
+    drawWebTabShowcase(ctx, state, width, height, faviconImg)
+    return
+  }
+
   const minDim = Math.min(width, height)
   const scaleFactor = (state.frameScale / 100) * (minDim / 500)
   const displayUrl = formatDisplayUrl(state.url)
@@ -353,36 +1035,38 @@ async function drawWebMode(
   let radii: [number, number, number, number] = [20, 20, 20, 20]
 
   const userScale = state.frameScale / 100
+  const offX = (state.frameOffsetX ?? 0) / 100
+  const offY = (state.frameOffsetY ?? 0) / 100
 
   if (state.webLayout === "offset") {
-    const leftPct = 0.11 + (1 - userScale) * 0.25
-    const topPct = 0.265 + (1 - userScale) * 0.2
+    const leftPct = 0.11 + (1 - userScale) * 0.24 + offX
+    const topPct = 0.265 + (1 - userScale) * 0.2 + offY
     fx = Math.round(width * leftPct)
     fy = Math.round(height * topPct)
-    fw = width - fx + 12
-    fh = height - fy + 12
+    fw = Math.max(Math.round(width * 0.4), width - fx + 12)
+    fh = Math.max(Math.round(height * 0.4), height - fy + 12)
     const r = Math.round(22 * scaleFactor)
     radii = [r, 0, 0, 0]
   } else if (state.webLayout === "centered") {
-    fw = Math.round(width * 0.82 * userScale)
-    fh = Math.round(height * 0.72 * userScale)
-    fx = Math.round((width - fw) / 2)
-    fy = Math.round((height - fh) / 2)
+    fw = Math.round(width * 0.84 * userScale)
+    fh = Math.round(height * 0.74 * userScale)
+    fx = Math.round(width * (0.5 + offX) - fw / 2)
+    fy = Math.round(height * (0.5 + offY) - fh / 2)
     const r = Math.round(16 * scaleFactor)
     radii = [r, r, r, r]
   } else if (state.webLayout === "docked") {
     fw = Math.round(width * 0.86 * userScale)
-    fh = Math.round(height * 0.8 * userScale)
-    fx = Math.round((width - fw) / 2)
-    fy = height - fh + 8
+    fh = Math.round(height * 0.82 * userScale)
+    fx = Math.round(width * (0.5 + offX) - fw / 2)
+    fy = Math.round(height * (1 + offY) - fh + 8)
     const r = Math.round(18 * scaleFactor)
     radii = [r, r, 0, 0]
   } else {
     // floating
-    fw = Math.round(width * 0.76 * userScale)
-    fh = Math.round(height * 0.66 * userScale)
-    fx = Math.round((width - fw) / 2)
-    fy = Math.round((height - fh) / 2)
+    fw = Math.round(width * 0.8 * userScale * 0.92)
+    fh = Math.round(height * 0.7 * userScale * 0.92)
+    fx = Math.round(width * (0.5 + offX) - fw / 2)
+    fy = Math.round(height * (0.5 + offY) - fh / 2)
     const r = Math.round(20 * scaleFactor)
     radii = [r, r, r, r]
   }
@@ -430,9 +1114,14 @@ async function drawWebMode(
     ctx.fillStyle = stripBg
     ctx.fillRect(fx, fy, fw, tabBarH)
 
+    // Tab dimensions
+    const tabH = Math.round(28 * scaleFactor)
+    const tabTop = fy + tabBarH - tabH
+    const tabCy = tabTop + tabH / 2
+
     // 3 window dots
     const dotR = Math.max(3.5, 5.2 * scaleFactor)
-    const dotY = fy + tabBarH / 2
+    const dotY = tabCy
     const dotStartX = fx + 18 * scaleFactor
     const dotColors = isDarkChrome
       ? ["#3F3F46", "#3F3F46", "#3F3F46"]
@@ -446,10 +1135,9 @@ async function drawWebMode(
 
     // Curved active tab sticking up
     const tabX = dotStartX + 54 * scaleFactor
-    const tabW = Math.min(fw * 0.44, 185 * scaleFactor)
-    const tabTop = fy + 6 * scaleFactor
+    const tabW = Math.min(fw * 0.48, 200 * scaleFactor)
     const tabR = Math.round(10 * scaleFactor)
-    roundedRectPath(ctx, tabX, tabTop, tabW, tabBarH - 6 * scaleFactor + 2, [
+    roundedRectPath(ctx, tabX, tabTop, tabW, tabH + 2, [
       tabR,
       tabR,
       0,
@@ -458,64 +1146,145 @@ async function drawWebMode(
     ctx.fillStyle = toolbarBg
     ctx.fill()
 
+    // Active tab icon, title, and close (x) button
+    const tabIconSize = Math.round(12 * scaleFactor)
+    const tabPadL = Math.round(12 * scaleFactor)
+    const tabPadR = Math.round(8 * scaleFactor)
+    const tabIconX = tabX + tabPadL
+    const tabIconY = tabCy - tabIconSize / 2
+    const accentColor = resolveTabAccentColor(state)
+    if (faviconImg) {
+      drawContainedImage(ctx, faviconImg, tabIconX, tabIconY, tabIconSize, tabIconSize)
+    } else {
+      drawDefaultBrandIcon(ctx, tabIconX, tabIconY, tabIconSize, accentColor, false)
+    }
+
+    const closeBtnR = Math.round(8 * scaleFactor)
+    const closeCx = tabX + tabW - tabPadR - closeBtnR
+    const closeHalf = Math.round(3.5 * scaleFactor)
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(closeCx, tabCy, closeBtnR, 0, Math.PI * 2)
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255, 255, 255, 0.1)"
+      : "rgba(0, 0, 0, 0.06)"
+    ctx.fill()
+    ctx.strokeStyle = isDarkChrome ? "#D4D4D8" : "#52525B"
+    ctx.lineWidth = Math.max(1.1, 1.4 * scaleFactor)
+    ctx.lineCap = "round"
+    ctx.beginPath()
+    ctx.moveTo(closeCx - closeHalf, tabCy - closeHalf)
+    ctx.lineTo(closeCx + closeHalf, tabCy + closeHalf)
+    ctx.moveTo(closeCx + closeHalf, tabCy - closeHalf)
+    ctx.lineTo(closeCx - closeHalf, tabCy + closeHalf)
+    ctx.stroke()
+    ctx.restore()
+
+    const isDefaultLerhem = displayUrl.toLowerCase().includes("lerhem.space")
+    const tabLabel =
+      state.tabTitle.trim() ||
+      state.metadata?.siteName ||
+      (isDefaultLerhem ? "Lerhem" : displayUrl)
+    const tabTitleX = tabIconX + tabIconSize + Math.round(6 * scaleFactor)
+    const maxTabTitleW = Math.max(24, closeCx - closeBtnR - Math.round(6 * scaleFactor) - tabTitleX)
+    const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+    ctx.save()
+    ctx.font = `500 ${Math.round(10 * scaleFactor)}px ${sansFont}`
+    ctx.fillStyle = isDarkChrome ? "#E4E4E7" : "#18181B"
+    ctx.globalAlpha = 0.85
+    ctx.textAlign = "left"
+    ctx.textBaseline = "middle"
+    ctx.fillText(tabLabel, tabTitleX, tabCy + 0.5, maxTabTitleW)
+    ctx.restore()
+
+    // New tab (+) button next to active tab
+    const newTabBtnR = Math.round(10 * scaleFactor)
+    const newTabCx = tabX + tabW + Math.round(8 * scaleFactor) + newTabBtnR
+    const newTabCy = tabCy
+    const newTabHalf = Math.round(4.5 * scaleFactor)
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(newTabCx, newTabCy, newTabBtnR, 0, Math.PI * 2)
+    ctx.fillStyle = "rgba(255, 255, 255, 0.1)"
+    ctx.fill()
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)"
+    ctx.lineWidth = Math.max(1.1, 1.5 * scaleFactor)
+    ctx.lineCap = "round"
+    ctx.beginPath()
+    ctx.moveTo(newTabCx - newTabHalf, newTabCy)
+    ctx.lineTo(newTabCx + newTabHalf, newTabCy)
+    ctx.moveTo(newTabCx, newTabCy - newTabHalf)
+    ctx.lineTo(newTabCx, newTabCy + newTabHalf)
+    ctx.stroke()
+    ctx.restore()
+
     // Toolbar row
     const navY = fy + tabBarH
     ctx.fillStyle = toolbarBg
     ctx.fillRect(fx, navY, fw, navBarH)
 
     // Nav icons (< > refresh home)
-    const iconColor = isDarkChrome ? "#A1A1AA" : "#18181B"
-    ctx.strokeStyle = iconColor
-    ctx.lineWidth = Math.max(1.4, 1.8 * scaleFactor)
-    ctx.lineCap = "round"
-    ctx.lineJoin = "round"
-    const iconCy = navY + navBarH / 2
-    const ix = fx + 18 * scaleFactor
-    const s = 5 * scaleFactor
+    let pillX = fx + 14 * scaleFactor
+    if (state.showNavButtons) {
+      const iconColor = isDarkChrome ? "#A1A1AA" : "#18181B"
+      ctx.strokeStyle = iconColor
+      ctx.lineWidth = Math.max(1.4, 1.8 * scaleFactor)
+      ctx.lineCap = "round"
+      ctx.lineJoin = "round"
+      const iconCy = navY + navBarH / 2
+      const ix = fx + 18 * scaleFactor
+      const s = 5 * scaleFactor
 
-    // Back chevron <
-    ctx.beginPath()
-    ctx.moveTo(ix + s * 0.6, iconCy - s)
-    ctx.lineTo(ix - s * 0.5, iconCy)
-    ctx.lineTo(ix + s * 0.6, iconCy + s)
-    ctx.stroke()
+      // Back chevron <
+      ctx.beginPath()
+      ctx.moveTo(ix + s * 0.6, iconCy - s)
+      ctx.lineTo(ix - s * 0.5, iconCy)
+      ctx.lineTo(ix + s * 0.6, iconCy + s)
+      ctx.stroke()
 
-    // Forward chevron > (muted)
-    ctx.save()
-    ctx.globalAlpha = 0.35
-    const fx2 = ix + 24 * scaleFactor
-    ctx.beginPath()
-    ctx.moveTo(fx2 - s * 0.5, iconCy - s)
-    ctx.lineTo(fx2 + s * 0.6, iconCy)
-    ctx.lineTo(fx2 - s * 0.5, iconCy + s)
-    ctx.stroke()
-    ctx.restore()
+      // Forward chevron > (muted)
+      ctx.save()
+      ctx.globalAlpha = 0.35
+      const fx2 = ix + 24 * scaleFactor
+      ctx.beginPath()
+      ctx.moveTo(fx2 - s * 0.5, iconCy - s)
+      ctx.lineTo(fx2 + s * 0.6, iconCy)
+      ctx.lineTo(fx2 - s * 0.5, iconCy + s)
+      ctx.stroke()
+      ctx.restore()
 
-    // Refresh arc
-    const rx = ix + 52 * scaleFactor
-    ctx.beginPath()
-    ctx.arc(rx, iconCy, s * 0.95, 0.3, Math.PI * 1.85)
-    ctx.stroke()
+      // Refresh arc
+      const rx = ix + 52 * scaleFactor
+      ctx.beginPath()
+      ctx.arc(rx, iconCy, s * 0.95, 0.3, Math.PI * 1.85)
+      ctx.stroke()
 
-    // Home icon
-    const hx = ix + 80 * scaleFactor
-    ctx.beginPath()
-    ctx.moveTo(hx - s, iconCy)
-    ctx.lineTo(hx, iconCy - s)
-    ctx.lineTo(hx + s, iconCy)
-    ctx.lineTo(hx + s, iconCy + s * 0.9)
-    ctx.lineTo(hx - s, iconCy + s * 0.9)
-    ctx.closePath()
-    ctx.stroke()
+      // Home icon
+      const hx = ix + 80 * scaleFactor
+      ctx.beginPath()
+      ctx.moveTo(hx - s, iconCy)
+      ctx.lineTo(hx, iconCy - s)
+      ctx.lineTo(hx + s, iconCy)
+      ctx.lineTo(hx + s, iconCy + s * 0.9)
+      ctx.lineTo(hx - s, iconCy + s * 0.9)
+      ctx.closePath()
+      ctx.stroke()
+
+      pillX = hx + 20 * scaleFactor
+    }
 
     // URL pill
-    const pillX = hx + 20 * scaleFactor
     const pillH = Math.round(30 * scaleFactor)
     const pillY = navY + (navBarH - pillH) / 2
     const pillW = Math.max(100, fx + fw - pillX - 14 * scaleFactor)
     roundedRectPath(ctx, pillX, pillY, pillW, pillH, Math.round(9 * scaleFactor))
-    ctx.fillStyle = isDarkChrome ? "#27272A" : "#18181B"
+    ctx.fillStyle = isDarkChrome ? "#27272A" : "#F4F4F5"
     ctx.fill()
+    if (!isDarkChrome) {
+      ctx.lineWidth = Math.max(1, scaleFactor * 0.75)
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.06)"
+      ctx.stroke()
+    }
 
     // Lock badge inside URL pill
     const lockBoxSize = Math.round(20 * scaleFactor)
@@ -527,11 +1296,13 @@ async function drawWebMode(
       lockBoxSize,
       Math.round(5 * scaleFactor)
     )
-    ctx.fillStyle = "rgba(255,255,255,0.12)"
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255,255,255,0.12)"
+      : "rgba(0,0,0,0.06)"
     ctx.fill()
 
     ctx.font = `500 ${Math.round(12.5 * scaleFactor)}px "DM Sans", system-ui, sans-serif`
-    ctx.fillStyle = "#F4F4F5"
+    ctx.fillStyle = isDarkChrome ? "#F4F4F5" : "#27272A"
     ctx.textBaseline = "middle"
     ctx.fillText(
       displayUrl,
@@ -1301,8 +2072,14 @@ export async function renderStudioToCanvas(
 
   await drawBackground(ctx, state, logicalW, logicalH, options.format)
 
+  const faviconSrc = state.customFaviconUrl || state.metadata?.faviconUrl || null
+  const needsFavicon = Boolean(faviconSrc) && (state.showCornerIcon || state.mode === "web")
+  const faviconImg = needsFavicon ? await loadImageSafe(faviconSrc) : null
+
+  drawPosterOverlays(ctx, state, logicalW, logicalH, faviconImg)
+
   if (state.mode === "web") {
-    await drawWebMode(ctx, state, logicalW, logicalH)
+    await drawWebMode(ctx, state, logicalW, logicalH, faviconImg)
   } else {
     await drawSocialMode(ctx, state, logicalW, logicalH)
   }

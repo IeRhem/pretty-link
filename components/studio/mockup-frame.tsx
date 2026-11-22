@@ -2,10 +2,143 @@
 
 import * as React from "react"
 import { SocialMockupCard } from "@/components/studio/social-mockup-card"
-import { WebMockupCard } from "@/components/studio/web-mockup-card"
+import { PosterOverlays, WebMockupCard } from "@/components/studio/web-mockup-card"
 import { resolveAspectDimensions } from "@/lib/presets"
-import type { StudioState } from "@/lib/studio-types"
+import type { BackgroundPattern, StudioState } from "@/lib/studio-types"
 import { cn } from "@/lib/utils"
+
+function BackgroundPatternLayer({
+  pattern,
+  opacity,
+  logicalWidth,
+  logicalHeight,
+}: {
+  pattern: BackgroundPattern
+  opacity: number
+  logicalWidth: number
+  logicalHeight: number
+}) {
+  const crossId = React.useId()
+  if (!pattern || pattern === "none") return null
+
+  const alpha = Math.max(0, Math.min(1, opacity / 100))
+
+  if (pattern === "dots") {
+    return (
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: alpha,
+          backgroundImage:
+            "radial-gradient(circle, #ffffff 1.35px, transparent 1.35px)",
+          backgroundSize: "18px 18px",
+        }}
+      />
+    )
+  }
+
+  if (pattern === "grid") {
+    return (
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: alpha,
+          backgroundImage:
+            "linear-gradient(to right, rgba(255,255,255,0.85) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.85) 1px, transparent 1px)",
+          backgroundSize: "28px 28px",
+        }}
+      />
+    )
+  }
+
+  if (pattern === "diagonal") {
+    return (
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: alpha,
+          backgroundImage:
+            "repeating-linear-gradient(135deg, rgba(255,255,255,0.8) 0px, rgba(255,255,255,0.8) 1px, transparent 1px, transparent 16px)",
+        }}
+      />
+    )
+  }
+
+  if (pattern === "diamond") {
+    return (
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: alpha,
+          backgroundImage:
+            "repeating-linear-gradient(45deg, rgba(255,255,255,0.75) 0px, rgba(255,255,255,0.75) 1px, transparent 1px, transparent 20px), repeating-linear-gradient(-45deg, rgba(255,255,255,0.75) 0px, rgba(255,255,255,0.75) 1px, transparent 1px, transparent 20px)",
+        }}
+      />
+    )
+  }
+
+  if (pattern === "spotlight") {
+    return (
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: alpha,
+          backgroundImage:
+            "radial-gradient(circle at 20% 20%, rgba(255,255,255,0.85) 0%, transparent 55%), radial-gradient(circle at 82% 78%, rgba(255,255,255,0.65) 0%, transparent 58%)",
+        }}
+      />
+    )
+  }
+
+  if (pattern === "cross") {
+    return (
+      <svg
+        className="pointer-events-none absolute inset-0 size-full"
+        style={{ opacity: alpha }}
+        aria-hidden="true"
+      >
+        <defs>
+          <pattern
+            id={crossId}
+            width="28"
+            height="28"
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d="M 14 9 V 19 M 9 14 H 19"
+              stroke="#ffffff"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill={`url(#${crossId})`} />
+      </svg>
+    )
+  }
+
+  // rings
+  return (
+    <svg
+      viewBox={`0 0 ${logicalWidth} ${logicalHeight}`}
+      className="pointer-events-none absolute inset-0 size-full"
+      style={{ opacity: alpha }}
+      aria-hidden="true"
+    >
+      {[55, 110, 165, 220, 275, 330, 385, 440].map((r) => (
+        <circle
+          key={r}
+          cx={logicalWidth / 2}
+          cy={logicalHeight / 2}
+          r={r}
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.25"
+        />
+      ))}
+    </svg>
+  )
+}
 
 export function MockupFrame({
   state,
@@ -45,7 +178,10 @@ export function MockupFrame({
     return () => ro.disconnect()
   }, [])
 
-  const { width: logicalW, height: logicalH } = resolveAspectDimensions(state)
+  const { width: rawW, height: rawH } = resolveAspectDimensions(state)
+  const normScale = 500 / Math.min(rawW, rawH)
+  const logicalW = Math.round(rawW * normScale)
+  const logicalH = Math.round(rawH * normScale)
 
   const availW = Math.min(bounds.width, maxWidthPx)
   const availH = Math.min(bounds.height, maxHeightPx)
@@ -151,6 +287,23 @@ export function MockupFrame({
               }}
             />
           )}
+
+          {/* Procedural background pattern layer */}
+          {state.backgroundType !== "none" && (
+            <BackgroundPatternLayer
+              pattern={state.bgPattern}
+              opacity={state.bgPatternOpacity ?? 22}
+              logicalWidth={logicalW}
+              logicalHeight={logicalH}
+            />
+          )}
+
+          {/* Poster & branding overlay layer */}
+          <PosterOverlays
+            state={state}
+            logicalWidth={logicalW}
+            logicalHeight={logicalH}
+          />
 
           {/* Content layer */}
           {state.mode === "web" ? (

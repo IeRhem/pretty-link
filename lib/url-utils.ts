@@ -151,6 +151,8 @@ export function encodeShareState(state: StudioState): string {
     gradientAngle: state.gradientAngle,
     solidColor: state.solidColor,
     noiseOverlay: state.noiseOverlay,
+    bgPattern: state.bgPattern,
+    bgPatternOpacity: state.bgPatternOpacity,
     backgroundImageUrl: state.backgroundImageUrl.startsWith("data:")
       ? ""
       : state.backgroundImageUrl,
@@ -163,10 +165,28 @@ export function encodeShareState(state: StudioState): string {
     browserChrome: state.browserChrome,
     chromeTheme: state.chromeTheme,
     frameScale: state.frameScale,
+    frameOffsetX: state.frameOffsetX,
+    frameOffsetY: state.frameOffsetY,
     frameShadow: state.frameShadow,
+    showNavButtons: state.showNavButtons,
     customScreenshotUrl: state.customScreenshotUrl.startsWith("data:")
       ? ""
       : state.customScreenshotUrl,
+    tabTitle: state.tabTitle,
+    tabAccentColor: state.tabAccentColor,
+    customFaviconUrl: state.customFaviconUrl.startsWith("data:")
+      ? ""
+      : state.customFaviconUrl,
+    showCornerIcon: state.showCornerIcon,
+    cornerIconPosition: state.cornerIconPosition,
+    showPosterHeader: state.showPosterHeader,
+    posterHeadline: state.posterHeadline,
+    posterAccentText: state.posterAccentText,
+    posterHeadlineAlign: state.posterHeadlineAlign,
+    posterHeadlineSize: state.posterHeadlineSize,
+    showPosterFooter: state.showPosterFooter,
+    posterFooterTitle: state.posterFooterTitle,
+    posterFooterSubtitle: state.posterFooterSubtitle,
     socialPlatform: state.socialPlatform,
     socialCardStyle: state.socialCardStyle,
     socialCardTheme: state.socialCardTheme,

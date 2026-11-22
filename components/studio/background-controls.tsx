@@ -17,12 +17,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import {
+  BACKGROUND_PATTERNS,
   CURATED_UNSPLASH_PHOTOS,
   GRADIENT_PRESETS,
   SOLID_PRESETS,
   UNSPLASH_CATEGORIES,
 } from "@/lib/presets"
 import type {
+  BackgroundPattern,
   BackgroundType,
   StudioState,
   UnsplashPhoto,
@@ -39,6 +41,118 @@ const BG_OPTIONS: Array<{
   { id: "image", label: "Image", icon: IconPhotoPlus },
   { id: "unsplash", label: "Unsplash", icon: IconBrandUnsplash },
 ]
+
+function PatternThumb({ pattern }: { pattern: BackgroundPattern }) {
+  if (pattern === "none") {
+    return (
+      <span className="flex size-3.5 items-center justify-center rounded-[3px] border border-current/25 opacity-55">
+        <span className="h-px w-2.5 -rotate-45 bg-current" />
+      </span>
+    )
+  }
+  if (pattern === "dots") {
+    return (
+      <span
+        className="size-3.5 rounded-[3px] border border-current/20"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle, currentColor 1px, transparent 1px)",
+          backgroundSize: "5px 5px",
+        }}
+      />
+    )
+  }
+  if (pattern === "grid") {
+    return (
+      <span
+        className="size-3.5 rounded-[3px] border border-current/20"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, currentColor 0.75px, transparent 0.75px), linear-gradient(to bottom, currentColor 0.75px, transparent 0.75px)",
+          backgroundSize: "5px 5px",
+          opacity: 0.7,
+        }}
+      />
+    )
+  }
+  if (pattern === "diagonal") {
+    return (
+      <span
+        className="size-3.5 rounded-[3px] border border-current/20"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(135deg, currentColor 0px, currentColor 0.75px, transparent 0.75px, transparent 4px)",
+          opacity: 0.75,
+        }}
+      />
+    )
+  }
+  if (pattern === "diamond") {
+    return (
+      <span
+        className="size-3.5 rounded-[3px] border border-current/20"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(45deg, currentColor 0px, currentColor 0.75px, transparent 0.75px, transparent 5px), repeating-linear-gradient(-45deg, currentColor 0px, currentColor 0.75px, transparent 0.75px, transparent 5px)",
+          opacity: 0.65,
+        }}
+      />
+    )
+  }
+  if (pattern === "spotlight") {
+    return (
+      <span
+        className="size-3.5 rounded-[3px] border border-current/20"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 30% 30%, currentColor 0%, transparent 75%)",
+          opacity: 0.85,
+        }}
+      />
+    )
+  }
+  if (pattern === "cross") {
+    return (
+      <svg
+        viewBox="0 0 14 14"
+        className="size-3.5 rounded-[3px] border border-current/20 p-0.5"
+        aria-hidden="true"
+      >
+        <path
+          d="M 7 2.5 V 11.5 M 2.5 7 H 11.5"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    )
+  }
+  // rings
+  return (
+    <svg
+      viewBox="0 0 14 14"
+      className="size-3.5 rounded-[3px] border border-current/20"
+      aria-hidden="true"
+    >
+      <circle
+        cx="7"
+        cy="7"
+        r="2.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.1"
+      />
+      <circle
+        cx="7"
+        cy="7"
+        r="5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.1"
+      />
+    </svg>
+  )
+}
 
 export function BackgroundControls({
   state,
@@ -485,6 +599,65 @@ export function BackgroundControls({
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {state.backgroundType !== "none" && (
+        <div className="space-y-2.5 rounded-xl border border-border/70 bg-background/40 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Pattern
+            </span>
+            {state.bgPattern !== "none" && (
+              <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
+                {state.bgPatternOpacity}%
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-4 gap-1">
+            {BACKGROUND_PATTERNS.map((pat) => {
+              const active = state.bgPattern === pat.id
+              return (
+                <button
+                  key={pat.id}
+                  type="button"
+                  onClick={() => onChange({ bgPattern: pat.id })}
+                  className={cn(
+                    "flex flex-col items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-medium transition-colors",
+                    active
+                      ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                      : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                  )}
+                >
+                  <PatternThumb pattern={pat.id} />
+                  <span>{pat.label}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          {state.bgPattern !== "none" && (
+            <div className="space-y-1 pt-0.5">
+              <div className="flex justify-between text-[11px] text-muted-foreground">
+                <span>Intensity</span>
+                <span className="font-mono tabular-nums">
+                  {state.bgPatternOpacity}%
+                </span>
+              </div>
+              <Slider
+                min={5}
+                max={60}
+                step={1}
+                value={[state.bgPatternOpacity]}
+                onValueChange={(v) =>
+                  onChange({
+                    bgPatternOpacity: Array.isArray(v) ? (v[0] ?? 22) : v,
+                  })
+                }
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

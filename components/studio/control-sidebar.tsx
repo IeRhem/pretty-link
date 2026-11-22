@@ -3,18 +3,23 @@
 import * as React from "react"
 import {
   IconAdjustments,
+  IconAlignCenter,
+  IconAlignLeft,
+  IconAlignRight,
   IconCheck,
   IconChevronDown,
   IconCopy,
   IconLink,
   IconPhoto,
   IconPhotoUp,
+  IconSparkles,
   IconTrash,
   IconUser,
 } from "@tabler/icons-react"
 import { AspectRatioPicker } from "@/components/studio/aspect-ratio-picker"
 import { BackgroundControls } from "@/components/studio/background-controls"
 import { SocialPlatformIcon } from "@/components/studio/social-platform-icon"
+import { resolveTabAccentColor } from "@/components/studio/web-mockup-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -35,6 +40,8 @@ import type {
   BorderStyle,
   BrowserChromeStyle,
   ChromeTheme,
+  CornerIconPosition,
+  PosterHeadlineAlign,
   SocialCardStyle,
   StudioMode,
   StudioState,
@@ -89,13 +96,19 @@ export function ControlSidebar({
   onQuickCopy: () => void
 }) {
   const [frameSectionOpen, setFrameSectionOpen] = React.useState(true)
+  const [posterSectionOpen, setPosterSectionOpen] = React.useState(true)
   const screenshotInputRef = React.useRef<HTMLInputElement>(null)
+  const faviconInputRef = React.useRef<HTMLInputElement>(null)
   const avatarInputRef = React.useRef<HTMLInputElement>(null)
   const coverInputRef = React.useRef<HTMLInputElement>(null)
 
   const handleDataUrlUpload = (
     file: File | undefined,
-    field: "customScreenshotUrl" | "socialAvatarUrl" | "socialCoverUrl"
+    field:
+      | "customScreenshotUrl"
+      | "customFaviconUrl"
+      | "socialAvatarUrl"
+      | "socialCoverUrl"
   ) => {
     if (!file || !file.type.startsWith("image/")) return
     const reader = new FileReader()
@@ -236,13 +249,14 @@ export function ControlSidebar({
                     <Label className="text-[11px] text-muted-foreground">
                       Layout
                     </Label>
-                    <div className="grid grid-cols-4 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                    <div className="grid grid-cols-5 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
                       {(
                         [
                           { id: "offset", label: "Offset" },
                           { id: "centered", label: "Center" },
                           { id: "docked", label: "Docked" },
                           { id: "floating", label: "Float" },
+                          { id: "tab", label: "Header" },
                         ] as Array<{ id: WebLayoutStyle; label: string }>
                       ).map((opt) => (
                         <button
@@ -323,8 +337,8 @@ export function ControlSidebar({
                         <span className="font-mono">{state.frameScale}%</span>
                       </div>
                       <Slider
-                        min={70}
-                        max={115}
+                        min={60}
+                        max={140}
                         step={1}
                         value={[state.frameScale]}
                         onValueChange={(v) =>
@@ -353,45 +367,194 @@ export function ControlSidebar({
                     </div>
                   </div>
 
-                  <div>
-                    <input
-                      ref={screenshotInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) =>
-                        handleDataUrlUpload(
-                          e.target.files?.[0],
-                          "customScreenshotUrl"
-                        )
-                      }
-                    />
-                    <div className="flex gap-1.5">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-xs"
-                        onClick={() => screenshotInputRef.current?.click()}
-                      >
-                        <IconPhotoUp />
-                        {state.customScreenshotUrl
-                          ? "Replace Screenshot"
-                          : "Upload Screenshot"}
-                      </Button>
-                      {state.customScreenshotUrl && (
-                        <Button
+                  {/* Browser Position X / Y */}
+                  <div className="space-y-1.5 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] text-muted-foreground">
+                        Position
+                      </Label>
+                      {(state.frameOffsetX !== 0 || state.frameOffsetY !== 0) && (
+                        <button
                           type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => onChange({ customScreenshotUrl: "" })}
-                          aria-label="Clear custom screenshot"
+                          onClick={() =>
+                            onChange({ frameOffsetX: 0, frameOffsetY: 0 })
+                          }
+                          className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
                         >
-                          <IconTrash />
-                        </Button>
+                          Reset
+                        </button>
                       )}
                     </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px] text-muted-foreground">
+                          <span>X</span>
+                          <span className="font-mono tabular-nums">
+                            {state.frameOffsetX > 0 ? `+${state.frameOffsetX}` : state.frameOffsetX}%
+                          </span>
+                        </div>
+                        <Slider
+                          min={-50}
+                          max={50}
+                          step={1}
+                          value={[state.frameOffsetX]}
+                          onValueChange={(v) =>
+                            onChange({
+                              frameOffsetX: Array.isArray(v) ? (v[0] ?? 0) : v,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px] text-muted-foreground">
+                          <span>Y</span>
+                          <span className="font-mono tabular-nums">
+                            {state.frameOffsetY > 0 ? `+${state.frameOffsetY}` : state.frameOffsetY}%
+                          </span>
+                        </div>
+                        <Slider
+                          min={-50}
+                          max={50}
+                          step={1}
+                          value={[state.frameOffsetY]}
+                          onValueChange={(v) =>
+                            onChange({
+                              frameOffsetY: Array.isArray(v) ? (v[0] ?? 0) : v,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
                   </div>
+
+                  <div className="flex items-center justify-between px-0.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Navigation Icons
+                    </Label>
+                    <Switch
+                      checked={state.showNavButtons}
+                      onCheckedChange={(checked) =>
+                        onChange({ showNavButtons: checked })
+                      }
+                    />
+                  </div>
+
+                  {state.webLayout === "tab" ? (
+                    <div className="space-y-2.5 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">
+                          Tab Title
+                        </Label>
+                        <Input
+                          value={state.tabTitle}
+                          onChange={(e) =>
+                            onChange({ tabTitle: e.target.value })
+                          }
+                          placeholder="Lerhem Studio"
+                          className="h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] text-muted-foreground">
+                            URL Accent
+                          </Label>
+                          {state.tabAccentColor && (
+                            <button
+                              type="button"
+                              onClick={() => onChange({ tabAccentColor: "" })}
+                              className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                            >
+                              Auto
+                            </button>
+                          )}
+                        </div>
+                        <label className="flex items-center justify-between rounded-lg border border-border/70 bg-card/70 px-2.5 py-1.5 text-xs">
+                          <span className="font-mono text-[11px] uppercase text-muted-foreground">
+                            {resolveTabAccentColor(state)}
+                          </span>
+                          <input
+                            type="color"
+                            value={resolveTabAccentColor(state)}
+                            onChange={(e) =>
+                              onChange({ tabAccentColor: e.target.value })
+                            }
+                            aria-label="Tab URL accent color"
+                            className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="flex gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 text-xs"
+                          onClick={() => faviconInputRef.current?.click()}
+                        >
+                          <IconPhotoUp />
+                          {state.customFaviconUrl
+                            ? "Replace Icon"
+                            : "Upload Icon"}
+                        </Button>
+                        {state.customFaviconUrl && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => onChange({ customFaviconUrl: "" })}
+                            aria-label="Clear custom icon"
+                          >
+                            <IconTrash />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <input
+                        ref={screenshotInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) =>
+                          handleDataUrlUpload(
+                            e.target.files?.[0],
+                            "customScreenshotUrl"
+                          )
+                        }
+                      />
+                      <div className="flex gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 text-xs"
+                          onClick={() => screenshotInputRef.current?.click()}
+                        >
+                          <IconPhotoUp />
+                          {state.customScreenshotUrl
+                            ? "Replace Screenshot"
+                            : "Upload Screenshot"}
+                        </Button>
+                        {state.customScreenshotUrl && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() =>
+                              onChange({ customScreenshotUrl: "" })
+                            }
+                            aria-label="Clear custom screenshot"
+                          >
+                            <IconTrash />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -660,6 +823,282 @@ export function ControlSidebar({
                         onChange({ socialShowQr: checked })
                       }
                     />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Separator className="opacity-60" />
+
+            {/* Poster & Branding Overlays Section */}
+            <div className="space-y-3">
+              <input
+                ref={faviconInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) =>
+                  handleDataUrlUpload(e.target.files?.[0], "customFaviconUrl")
+                }
+              />
+              <button
+                type="button"
+                onClick={() => setPosterSectionOpen((v) => !v)}
+                className="flex w-full items-center justify-between text-left"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                  <IconSparkles className="size-3.5" />
+                  Poster &amp; Branding
+                </span>
+                <IconChevronDown
+                  className={cn(
+                    "size-4 text-muted-foreground transition-transform",
+                    posterSectionOpen && "rotate-180"
+                  )}
+                />
+              </button>
+
+              {posterSectionOpen && (
+                <div className="space-y-3">
+                  {/* Corner Icon Watermark */}
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">
+                        Corner Icon Watermark
+                      </Label>
+                      <Switch
+                        checked={state.showCornerIcon}
+                        onCheckedChange={(checked) =>
+                          onChange({ showCornerIcon: checked })
+                        }
+                      />
+                    </div>
+                    {state.showCornerIcon && (
+                      <div className="space-y-2 pt-1">
+                        <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                          {(
+                            [
+                              { id: "top-left", label: "Left" },
+                              { id: "top-center", label: "Center" },
+                              { id: "top-right", label: "Right" },
+                            ] as Array<{
+                              id: CornerIconPosition
+                              label: string
+                            }>
+                          ).map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                onChange({ cornerIconPosition: opt.id })
+                              }
+                              className={cn(
+                                "rounded-lg py-1 text-[11px] font-medium transition-colors",
+                                state.cornerIconPosition === opt.id
+                                  ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-xs"
+                            onClick={() => faviconInputRef.current?.click()}
+                          >
+                            <IconPhotoUp />
+                            {state.customFaviconUrl
+                              ? "Replace Icon"
+                              : "Upload Icon"}
+                          </Button>
+                          {state.customFaviconUrl && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() =>
+                                onChange({ customFaviconUrl: "" })
+                              }
+                              aria-label="Clear custom icon"
+                            >
+                              <IconTrash />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Headline Text */}
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">
+                        Headline Text
+                      </Label>
+                      <Switch
+                        checked={state.showPosterHeader}
+                        onCheckedChange={(checked) =>
+                          onChange({ showPosterHeader: checked })
+                        }
+                      />
+                    </div>
+                    {state.showPosterHeader && (
+                      <div className="space-y-2 pt-1">
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Main Title
+                          </Label>
+                          <Textarea
+                            value={state.posterHeadline}
+                            onChange={(e) =>
+                              onChange({ posterHeadline: e.target.value })
+                            }
+                            placeholder={"Digital\nProduct"}
+                            rows={2}
+                            className="min-h-14 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Muted Accent Word
+                          </Label>
+                          <Input
+                            value={state.posterAccentText}
+                            onChange={(e) =>
+                              onChange({ posterAccentText: e.target.value })
+                            }
+                            placeholder="Showcase"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Text Size</span>
+                            <span className="font-mono tabular-nums">
+                              {state.posterHeadlineSize}%
+                            </span>
+                          </div>
+                          <Slider
+                            min={60}
+                            max={140}
+                            step={5}
+                            value={[state.posterHeadlineSize]}
+                            onValueChange={(v) =>
+                              onChange({
+                                posterHeadlineSize: Array.isArray(v)
+                                  ? (v[0] ?? 100)
+                                  : v,
+                              })
+                            }
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Alignment
+                          </Label>
+                          <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                            {(
+                              [
+                                {
+                                  id: "left",
+                                  label: "Left",
+                                  icon: IconAlignLeft,
+                                },
+                                {
+                                  id: "center",
+                                  label: "Center",
+                                  icon: IconAlignCenter,
+                                },
+                                {
+                                  id: "right",
+                                  label: "Right",
+                                  icon: IconAlignRight,
+                                },
+                              ] as Array<{
+                                id: PosterHeadlineAlign
+                                label: string
+                                icon: React.ComponentType<{
+                                  className?: string
+                                }>
+                              }>
+                            ).map((opt) => {
+                              const AlignIcon = opt.icon
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() =>
+                                    onChange({ posterHeadlineAlign: opt.id })
+                                  }
+                                  className={cn(
+                                    "flex items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                                    state.posterHeadlineAlign === opt.id
+                                      ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                      : "text-muted-foreground hover:text-foreground"
+                                  )}
+                                >
+                                  <AlignIcon className="size-3.5" />
+                                  <span>{opt.label}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer Signature */}
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">
+                        Footer Signature
+                      </Label>
+                      <Switch
+                        checked={state.showPosterFooter}
+                        onCheckedChange={(checked) =>
+                          onChange({ showPosterFooter: checked })
+                        }
+                      />
+                    </div>
+                    {state.showPosterFooter && (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Brand
+                          </Label>
+                          <Input
+                            value={state.posterFooterTitle}
+                            onChange={(e) =>
+                              onChange({ posterFooterTitle: e.target.value })
+                            }
+                            placeholder="leRhem"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Domain
+                          </Label>
+                          <Input
+                            value={state.posterFooterSubtitle}
+                            onChange={(e) =>
+                              onChange({ posterFooterSubtitle: e.target.value })
+                            }
+                            placeholder="lerhem.space"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

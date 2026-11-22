@@ -1,12 +1,23 @@
 export type StudioMode = "web" | "social"
 
 export type BackgroundType = "none" | "color" | "image" | "unsplash"
+export type BackgroundPattern =
+  | "none"
+  | "dots"
+  | "grid"
+  | "diagonal"
+  | "cross"
+  | "rings"
+  | "diamond"
+  | "spotlight"
 export type ColorFillMode = "gradient" | "solid"
 export type BorderStyle = "sharp" | "curved" | "round"
 
-export type WebLayoutStyle = "offset" | "centered" | "docked" | "floating"
+export type WebLayoutStyle = "offset" | "centered" | "docked" | "floating" | "tab"
 export type BrowserChromeStyle = "chrome" | "safari" | "arc" | "minimal" | "none"
 export type ChromeTheme = "light" | "dark" | "glass"
+export type PosterHeadlineAlign = "left" | "center" | "right"
+export type CornerIconPosition = "top-left" | "top-center" | "top-right"
 
 export type SocialCardStyle = "glass" | "elevated" | "browser" | "pill" | "bento"
 export type SocialPlatformId =
@@ -96,6 +107,8 @@ export interface StudioState {
   gradientAngle: number
   solidColor: string
   noiseOverlay: boolean
+  bgPattern: BackgroundPattern
+  bgPatternOpacity: number
   backgroundImageUrl: string
   unsplashPhotoId: string
   unsplashPhotographer: string
@@ -110,8 +123,26 @@ export interface StudioState {
   browserChrome: BrowserChromeStyle
   chromeTheme: ChromeTheme
   frameScale: number
+  frameOffsetX: number
+  frameOffsetY: number
   frameShadow: number
+  showNavButtons: boolean
   customScreenshotUrl: string
+
+  // Tab showcase & poster branding options
+  tabTitle: string
+  tabAccentColor: string
+  customFaviconUrl: string
+  showCornerIcon: boolean
+  cornerIconPosition: CornerIconPosition
+  showPosterHeader: boolean
+  posterHeadline: string
+  posterAccentText: string
+  posterHeadlineAlign: PosterHeadlineAlign
+  posterHeadlineSize: number
+  showPosterFooter: boolean
+  posterFooterTitle: string
+  posterFooterSubtitle: string
 
   // Social mode options
   socialPlatform: SocialPlatformId
@@ -148,6 +179,8 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   gradientAngle: 135,
   solidColor: "#6366F1",
   noiseOverlay: false,
+  bgPattern: "none",
+  bgPatternOpacity: 22,
   backgroundImageUrl: "",
   unsplashPhotoId: "",
   unsplashPhotographer: "",
@@ -160,8 +193,25 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   browserChrome: "chrome",
   chromeTheme: "light",
   frameScale: 100,
+  frameOffsetX: 0,
+  frameOffsetY: 0,
   frameShadow: 65,
+  showNavButtons: true,
   customScreenshotUrl: "",
+
+  tabTitle: "",
+  tabAccentColor: "",
+  customFaviconUrl: "",
+  showCornerIcon: false,
+  cornerIconPosition: "top-left",
+  showPosterHeader: false,
+  posterHeadline: "Digital\nProduct",
+  posterAccentText: "Showcase",
+  posterHeadlineAlign: "left",
+  posterHeadlineSize: 100,
+  showPosterFooter: false,
+  posterFooterTitle: "leRhem",
+  posterFooterSubtitle: "lerhem.space",
 
   socialPlatform: "x",
   socialCardStyle: "elevated",

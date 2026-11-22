@@ -2,16 +2,273 @@
 
 import * as React from "react"
 import {
+  IconArrowUpRight,
   IconChevronLeft,
   IconChevronRight,
   IconHome,
   IconLock,
+  IconPlus,
   IconRefresh,
   IconWorld,
+  IconX,
 } from "@tabler/icons-react"
 import type { StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl, validatePublicUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
+
+const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+
+export function resolveTabAccentColor(state: StudioState): string {
+  const custom = state.tabAccentColor.trim()
+  if (HEX_COLOR_RE.test(custom)) return custom
+
+  const theme = state.metadata?.themeColor?.trim()
+  if (theme && HEX_COLOR_RE.test(theme)) return theme
+
+  if (state.backgroundType === "color") {
+    const bgHex =
+      state.colorFillMode === "solid" ? state.solidColor : state.gradientFrom
+    if (HEX_COLOR_RE.test(bgHex.trim())) return bgHex.trim()
+  }
+
+  return "#38A869"
+}
+
+export function hexToTintRgba(hex: string, alpha: number): string {
+  const clean = hex.trim().replace(/^#/, "")
+  let r = 56
+  let g = 168
+  let b = 105
+  if (clean.length === 3) {
+    r = parseInt(clean[0]! + clean[0]!, 16)
+    g = parseInt(clean[1]! + clean[1]!, 16)
+    b = parseInt(clean[2]! + clean[2]!, 16)
+  } else if (clean.length === 6) {
+    r = parseInt(clean.slice(0, 2), 16)
+    g = parseInt(clean.slice(2, 4), 16)
+    b = parseInt(clean.slice(4, 6), 16)
+  }
+  if ([r, g, b].some((n) => Number.isNaN(n))) {
+    return `rgba(56, 168, 105, ${alpha})`
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function BrandMarkSvg({
+  accentColor,
+  monochrome = false,
+  className,
+  style,
+}: {
+  accentColor: string
+  monochrome?: boolean
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const badgeFill = monochrome
+    ? "rgba(255, 255, 255, 0.22)"
+    : hexToTintRgba(accentColor, 0.16)
+  const backFacet = monochrome
+    ? "rgba(255, 255, 255, 0.36)"
+    : hexToTintRgba(accentColor, 0.48)
+  const frontFacet = monochrome ? "rgba(255, 255, 255, 0.72)" : accentColor
+
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      className={className}
+      style={style}
+      aria-hidden="true"
+    >
+      <rect x="8" y="8" width="84" height="84" rx="24" fill={badgeFill} />
+      <rect x="27" y="27" width="33" height="33" rx="10" fill={backFacet} />
+      <rect x="40" y="40" width="33" height="33" rx="10" fill={frontFacet} />
+      <rect
+        x="45"
+        y="45"
+        width="10"
+        height="10"
+        rx="3.5"
+        fill="rgba(255, 255, 255, 0.9)"
+      />
+    </svg>
+  )
+}
+
+function SolidPadlockSvg({
+  color,
+  style,
+}: {
+  color: string
+  style?: React.CSSProperties
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      style={style}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <path
+        d="M7.5 10V7.5C7.5 5.01472 9.51472 3 12 3C14.4853 3 16.5 5.01472 16.5 7.5V10"
+        stroke={color}
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
+      <rect x="4.5" y="9.5" width="15" height="11.5" rx="3.2" fill={color} />
+    </svg>
+  )
+}
+
+export function PosterOverlays({
+  state,
+  logicalWidth,
+  logicalHeight,
+}: {
+  state: StudioState
+  logicalWidth: number
+  logicalHeight: number
+}) {
+  const [failedFavicons, setFailedFavicons] = React.useState<string[]>([])
+  const hasAnyOverlay =
+    state.showCornerIcon || state.showPosterHeader || state.showPosterFooter
+  if (!hasAnyOverlay) return null
+
+  const minDim = Math.min(logicalWidth, logicalHeight)
+  const scaleFactor = minDim / 500
+  const accentColor = resolveTabAccentColor(state)
+
+  const faviconCandidates = [
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+  ].filter((v): v is string => Boolean(v))
+  const activeFavicon =
+    faviconCandidates.find((src) => !failedFavicons.includes(src)) ?? ""
+
+  const cornerSize = Math.round(46 * scaleFactor)
+  const headlineScale = (state.posterHeadlineSize ?? 100) / 100
+  const headlineFontSize = Math.round(42 * scaleFactor * headlineScale)
+  const headlineLines = state.posterHeadline.split("\n")
+  const hasAccentText = Boolean(state.posterAccentText.trim())
+
+  const cornerPosStyle: React.CSSProperties =
+    state.cornerIconPosition === "top-center"
+      ? {
+          left: "50%",
+          top: "5.5%",
+          transform: "translateX(-50%)",
+          width: `${cornerSize}px`,
+          height: `${cornerSize}px`,
+        }
+      : state.cornerIconPosition === "top-right"
+        ? {
+            right: "7.5%",
+            top: "5.5%",
+            width: `${cornerSize}px`,
+            height: `${cornerSize}px`,
+          }
+        : {
+            left: "7.5%",
+            top: "5.5%",
+            width: `${cornerSize}px`,
+            height: `${cornerSize}px`,
+          }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-0 select-none">
+      {state.showCornerIcon && (
+        <div
+          style={cornerPosStyle}
+          className="absolute flex items-center justify-center"
+        >
+          {activeFavicon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={activeFavicon}
+              alt=""
+              onError={() =>
+                setFailedFavicons((prev) =>
+                  prev.includes(activeFavicon) ? prev : [...prev, activeFavicon]
+                )
+              }
+              style={{ opacity: 0.42, filter: "brightness(1.25)" }}
+              className="size-full rounded-xl object-contain"
+            />
+          ) : (
+            <BrandMarkSvg
+              accentColor={accentColor}
+              monochrome
+              className="size-full"
+            />
+          )}
+        </div>
+      )}
+
+      {state.showPosterHeader && (
+        <div
+          style={{
+            top: "17%",
+            left: "8%",
+            right: "8%",
+            textAlign: state.posterHeadlineAlign,
+            fontSize: `${headlineFontSize}px`,
+            lineHeight: 1.08,
+            letterSpacing: "-0.03em",
+            fontWeight: 500,
+          }}
+          className="absolute font-heading text-white"
+        >
+          {headlineLines.map((line, idx) => {
+            const isLast = idx === headlineLines.length - 1
+            return (
+              <div key={idx}>
+                <span>{line}</span>
+                {isLast && hasAccentText && (
+                  <span style={{ color: "rgba(255, 255, 255, 0.5)" }}>
+                    {line ? " " : ""}
+                    {state.posterAccentText}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {state.showPosterFooter && (
+        <div
+          style={{ bottom: "4.5%" }}
+          className="absolute inset-x-0 flex flex-col items-center text-center"
+        >
+          {state.posterFooterTitle && (
+            <div
+              style={{
+                fontSize: `${Math.round(14 * scaleFactor)}px`,
+                letterSpacing: "0.06em",
+              }}
+              className="font-heading font-bold text-white"
+            >
+              {state.posterFooterTitle}
+            </div>
+          )}
+          {state.posterFooterSubtitle && (
+            <div
+              style={{
+                fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+                marginTop: `${Math.round(2 * scaleFactor)}px`,
+                color: "rgba(255, 255, 255, 0.75)",
+              }}
+              className="font-medium"
+            >
+              {state.posterFooterSubtitle}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function WebMockupCard({
   state,
@@ -65,6 +322,12 @@ export function WebMockupCard({
   )
 
   const activeImage = candidates.find((src) => !failedUrls.includes(src)) ?? ""
+  const faviconCandidates = [
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+  ].filter((v): v is string => Boolean(v))
+  const activeFavicon =
+    faviconCandidates.find((src) => !failedUrls.includes(src)) ?? ""
   const imageReady = Boolean(activeImage) && loadedSrc === activeImage
   const iframeReady = Boolean(liveIframeUrl) && iframeLoadedUrl === liveIframeUrl
   const showLoadingHint =
@@ -86,6 +349,7 @@ export function WebMockupCard({
   const isDarkChrome = state.chromeTheme === "dark"
   const isGlassChrome = state.chromeTheme === "glass"
   const isDefaultLerhem = displayUrl.toLowerCase().includes("lerhem.space")
+  const accentColor = resolveTabAccentColor(state)
 
   const shadowAlpha = 0.14 + (state.frameShadow / 100) * 0.44
   const shadowBlur = Math.round(44 * scaleFactor * (state.frameShadow / 100))
@@ -98,17 +362,31 @@ export function WebMockupCard({
           ? `0 ${shadowY}px ${shadowBlur}px rgba(9, 9, 14, ${shadowAlpha})`
           : "none",
     }
+    const offX = state.frameOffsetX ?? 0
+    const offY = state.frameOffsetY ?? 0
+
+    if (state.webLayout === "tab") {
+      return {
+        ...base,
+        position: "absolute",
+        left: `${50 + offX}%`,
+        top: `${56 + offY}%`,
+        transform: `translate(-50%, -50%) scale(${userScale})`,
+        width: "88%",
+        borderRadius: `${Math.round(20 * scaleFactor)}px`,
+      }
+    }
 
     if (state.webLayout === "offset") {
-      const leftPct = 11 + (1 - userScale) * 24
-      const topPct = 26.5 + (1 - userScale) * 20
+      const leftPct = 11 + (1 - userScale) * 24 + offX
+      const topPct = 26.5 + (1 - userScale) * 20 + offY
       return {
         ...base,
         position: "absolute",
         left: `${leftPct}%`,
         top: `${topPct}%`,
-        width: `${100 - leftPct + 2}%`,
-        height: `${100 - topPct + 2}%`,
+        width: `${Math.max(40, 100 - leftPct + 2)}%`,
+        height: `${Math.max(40, 100 - topPct + 2)}%`,
         borderTopLeftRadius: `${Math.round(22 * scaleFactor)}px`,
       }
     }
@@ -117,8 +395,8 @@ export function WebMockupCard({
       return {
         ...base,
         position: "absolute",
-        left: "50%",
-        top: "50%",
+        left: `${50 + offX}%`,
+        top: `${50 + offY}%`,
         transform: `translate(-50%, -50%) scale(${userScale})`,
         width: "84%",
         height: "74%",
@@ -130,8 +408,8 @@ export function WebMockupCard({
       return {
         ...base,
         position: "absolute",
-        left: "50%",
-        bottom: 0,
+        left: `${50 + offX}%`,
+        bottom: `${-offY}%`,
         transform: `translateX(-50%) scale(${userScale})`,
         transformOrigin: "bottom center",
         width: "86%",
@@ -145,8 +423,8 @@ export function WebMockupCard({
     return {
       ...base,
       position: "absolute",
-      left: "50%",
-      top: "50%",
+      left: `${50 + offX}%`,
+      top: `${50 + offY}%`,
       transform: `translate(-50%, -50%) scale(${userScale * 0.92})`,
       width: "80%",
       height: "70%",
@@ -155,6 +433,8 @@ export function WebMockupCard({
   }, [
     state.webLayout,
     state.frameShadow,
+    state.frameOffsetX,
+    state.frameOffsetY,
     userScale,
     scaleFactor,
     shadowAlpha,
@@ -166,12 +446,13 @@ export function WebMockupCard({
     if (state.browserChrome === "none") return null
 
     if (state.browserChrome === "chrome") {
+      const tabH = Math.round(28 * scaleFactor)
       return (
         <div className="shrink-0 select-none">
           {/* Top dark window bar with curved active tab */}
           <div
             className={cn(
-              "relative flex items-end px-4 pt-2",
+              "relative flex items-end px-4",
               isDarkChrome
                 ? "bg-[#0d0d10]"
                 : isGlassChrome
@@ -180,14 +461,18 @@ export function WebMockupCard({
             )}
             style={{ height: `${Math.round(36 * scaleFactor)}px` }}
           >
-            <div className="mb-2.5 flex items-center gap-1.5">
+            <div
+              style={{ height: `${tabH}px` }}
+              className="flex shrink-0 items-center gap-1.5"
+            >
               <span className="size-2.5 rounded-full bg-zinc-700" />
               <span className="size-2.5 rounded-full bg-zinc-700" />
               <span className="size-2.5 rounded-full bg-zinc-700" />
             </div>
             <div
+              style={{ height: `${tabH}px` }}
               className={cn(
-                "relative ml-4 flex h-[80%] min-w-[36%] max-w-[52%] items-center rounded-t-[10px] px-3.5",
+                "relative ml-4 flex min-w-[36%] max-w-[56%] items-center gap-1.5 rounded-t-[10px] pr-2 pl-3",
                 isDarkChrome
                   ? "bg-[#18181b] text-zinc-200"
                   : isGlassChrome
@@ -195,16 +480,47 @@ export function WebMockupCard({
                     : "bg-white text-zinc-900"
               )}
             >
-              {state.metadata?.faviconUrl ? (
+              {activeFavicon ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={state.metadata.faviconUrl}
+                  src={activeFavicon}
                   alt=""
-                  className="mr-1.5 size-3 rounded-xs object-contain"
+                  onError={() => markFailed(activeFavicon)}
+                  className="size-3 shrink-0 rounded-xs object-contain"
                 />
-              ) : null}
-              <span className="truncate text-[10px] font-medium opacity-75">
-                {state.metadata?.siteName || (isDefaultLerhem ? "Lerhem" : displayUrl)}
+              ) : (
+                <BrandMarkSvg
+                  accentColor={accentColor}
+                  className="size-3 shrink-0"
+                />
+              )}
+              <span className="truncate text-[10px] font-medium opacity-85">
+                {state.tabTitle.trim() ||
+                  state.metadata?.siteName ||
+                  (isDefaultLerhem ? "Lerhem" : displayUrl)}
+              </span>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "ml-auto flex size-4 shrink-0 items-center justify-center rounded-full",
+                  isDarkChrome
+                    ? "bg-white/10 text-zinc-300"
+                    : "bg-black/6 text-zinc-600"
+                )}
+              >
+                <IconX className="size-2.5" stroke={2.4} />
+              </span>
+            </div>
+
+            <div
+              style={{ height: `${tabH}px` }}
+              className="ml-2 flex shrink-0 items-center"
+            >
+              <span
+                aria-hidden="true"
+                className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/85"
+              >
+                <IconPlus className="size-3" stroke={2.2} />
               </span>
             </div>
           </div>
@@ -221,21 +537,36 @@ export function WebMockupCard({
             )}
             style={{ height: `${Math.round(44 * scaleFactor)}px` }}
           >
-            <div className="flex shrink-0 items-center gap-2">
-              <IconChevronLeft className="size-4" stroke={1.8} />
-              <IconChevronRight className="size-4 opacity-30" stroke={1.8} />
-              <IconRefresh className="size-3.5" stroke={1.9} />
-              <IconHome className="size-3.5" stroke={1.9} />
-            </div>
+            {state.showNavButtons && (
+              <div className="flex shrink-0 items-center gap-2">
+                <IconChevronLeft className="size-4" stroke={1.8} />
+                <IconChevronRight className="size-4 opacity-30" stroke={1.8} />
+                <IconRefresh className="size-3.5" stroke={1.9} />
+                <IconHome className="size-3.5" stroke={1.9} />
+              </div>
+            )}
 
             <div
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1",
-                isDarkChrome ? "bg-zinc-800 text-zinc-100" : "bg-[#18181b] text-zinc-100"
+                isDarkChrome
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "bg-zinc-100 text-zinc-800 ring-1 ring-black/5"
               )}
             >
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-white/12">
-                <IconLock className="size-3 text-zinc-200" stroke={2} />
+              <span
+                className={cn(
+                  "flex size-5 shrink-0 items-center justify-center rounded-md",
+                  isDarkChrome ? "bg-white/12" : "bg-black/5"
+                )}
+              >
+                <IconLock
+                  className={cn(
+                    "size-3",
+                    isDarkChrome ? "text-zinc-200" : "text-zinc-600"
+                  )}
+                  stroke={2}
+                />
               </span>
               <span className="truncate text-xs font-medium tracking-tight">
                 {displayUrl}
@@ -300,11 +631,277 @@ export function WebMockupCard({
     )
   }
 
+  if (state.webLayout === "tab") {
+    const tabBarH = Math.round(46 * scaleFactor)
+    const navBarH = Math.round(58 * scaleFactor)
+    const tabHeight = Math.round(38 * scaleFactor)
+    const tabRadius = Math.round(12 * scaleFactor)
+    const filletSize = Math.round(8 * scaleFactor)
+    const dotSize = Math.round(10 * scaleFactor)
+    const dotGap = Math.round(6 * scaleFactor)
+    const iconSize = Math.round(18 * scaleFactor)
+    const closeBtnSize = Math.round(18 * scaleFactor)
+    const plusBtnSize = Math.round(22 * scaleFactor)
+    const navIconSize = Math.round(16 * scaleFactor)
+    const pillHeight = Math.round(38 * scaleFactor)
+    const pillRadius = Math.round(12 * scaleFactor)
+    const lockSize = Math.round(14 * scaleFactor)
+
+    const stripBg = isDarkChrome
+      ? "#0D0D10"
+      : isGlassChrome
+        ? "rgba(20, 20, 24, 0.84)"
+        : "#141418"
+    const tabBg = isDarkChrome
+      ? "#18181B"
+      : isGlassChrome
+        ? "rgba(255, 255, 255, 0.95)"
+        : "#FFFFFF"
+    const tabTitleText =
+      state.tabTitle.trim() ||
+      state.metadata?.siteName ||
+      (isDefaultLerhem ? "Lerhem Studio" : displayUrl)
+    const urlPillBg = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)
+    const urlPillBorder = hexToTintRgba(accentColor, isDarkChrome ? 0.28 : 0.18)
+    const navIconColor = isDarkChrome ? "#E4E4E7" : "#18181B"
+
+    return (
+      <div
+        style={frameBoxStyle}
+        className={cn(
+          "relative z-10 flex flex-col overflow-hidden ring-1 ring-black/10 select-none",
+          isGlassChrome && "backdrop-blur-xl"
+        )}
+      >
+        {/* Top Tab Strip */}
+        <div
+          style={{
+            height: `${tabBarH}px`,
+            backgroundColor: stripBg,
+            paddingLeft: `${Math.round(16 * scaleFactor)}px`,
+            paddingRight: `${Math.round(16 * scaleFactor)}px`,
+          }}
+          className="relative flex shrink-0 items-end"
+        >
+          {/* 3 window dots */}
+          <div
+            style={{ height: `${tabHeight}px`, gap: `${dotGap}px` }}
+            className="flex shrink-0 items-center"
+          >
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                style={{
+                  width: `${dotSize}px`,
+                  height: `${dotSize}px`,
+                  backgroundColor: "#52525B",
+                }}
+                className="rounded-full"
+              />
+            ))}
+          </div>
+
+          {/* Active Tab with concave bottom fillets */}
+          <div
+            style={{
+              marginLeft: `${Math.round(14 * scaleFactor)}px`,
+              height: `${tabHeight}px`,
+              backgroundColor: tabBg,
+              borderTopLeftRadius: `${tabRadius}px`,
+              borderTopRightRadius: `${tabRadius}px`,
+              paddingLeft: `${Math.round(12 * scaleFactor)}px`,
+              paddingRight: `${Math.round(12 * scaleFactor)}px`,
+              gap: `${Math.round(8 * scaleFactor)}px`,
+            }}
+            className="relative flex min-w-0 items-center"
+          >
+            {/* Bottom-left concave fillet */}
+            <svg
+              viewBox="0 0 16 16"
+              style={{
+                left: `-${filletSize}px`,
+                width: `${filletSize}px`,
+                height: `${filletSize}px`,
+              }}
+              className="pointer-events-none absolute bottom-0 block"
+              aria-hidden="true"
+            >
+              <path d="M 16 0 L 16 16 L 0 16 A 16 16 0 0 0 16 0 Z" fill={tabBg} />
+            </svg>
+
+            {/* Bottom-right concave fillet */}
+            <svg
+              viewBox="0 0 16 16"
+              style={{
+                right: `-${filletSize}px`,
+                width: `${filletSize}px`,
+                height: `${filletSize}px`,
+              }}
+              className="pointer-events-none absolute bottom-0 block"
+              aria-hidden="true"
+            >
+              <path d="M 0 0 L 0 16 L 16 16 A 16 16 0 0 1 0 0 Z" fill={tabBg} />
+            </svg>
+
+            {activeFavicon ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={activeFavicon}
+                alt=""
+                onError={() => markFailed(activeFavicon)}
+                style={{ width: `${iconSize}px`, height: `${iconSize}px` }}
+                className="shrink-0 rounded-sm object-contain"
+              />
+            ) : (
+              <BrandMarkSvg
+                accentColor={accentColor}
+                style={{ width: `${iconSize}px`, height: `${iconSize}px` }}
+                className="shrink-0"
+              />
+            )}
+
+            <span
+              style={{
+                fontSize: `${Math.round(13 * scaleFactor)}px`,
+                color: isDarkChrome ? "#F4F4F5" : "#18181B",
+                maxWidth: `${Math.round(180 * scaleFactor)}px`,
+              }}
+              className="truncate font-semibold tracking-tight"
+            >
+              {tabTitleText}
+            </span>
+
+            <span
+              aria-hidden="true"
+              style={{
+                width: `${closeBtnSize}px`,
+                height: `${closeBtnSize}px`,
+                backgroundColor: isDarkChrome
+                  ? "rgba(255, 255, 255, 0.1)"
+                  : "rgba(0, 0, 0, 0.06)",
+                color: isDarkChrome ? "#E4E4E7" : "#27272A",
+              }}
+              className="flex shrink-0 items-center justify-center rounded-full"
+            >
+              <IconX
+                style={{
+                  width: `${Math.round(11 * scaleFactor)}px`,
+                  height: `${Math.round(11 * scaleFactor)}px`,
+                }}
+                stroke={2.4}
+              />
+            </span>
+          </div>
+
+          {/* New tab + button */}
+          <div
+            style={{
+              height: `${tabHeight}px`,
+              marginLeft: `${Math.round(10 * scaleFactor)}px`,
+            }}
+            className="flex shrink-0 items-center"
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: `${plusBtnSize}px`,
+                height: `${plusBtnSize}px`,
+                backgroundColor: "rgba(255, 255, 255, 0.12)",
+                color: "rgba(255, 255, 255, 0.9)",
+              }}
+              className="flex shrink-0 items-center justify-center rounded-full"
+            >
+              <IconPlus
+                style={{
+                  width: `${Math.round(13 * scaleFactor)}px`,
+                  height: `${Math.round(13 * scaleFactor)}px`,
+                }}
+                stroke={2.2}
+              />
+            </span>
+          </div>
+        </div>
+
+        {/* Bottom Address Bar */}
+        <div
+          style={{
+            height: `${navBarH}px`,
+            backgroundColor: tabBg,
+            paddingLeft: `${Math.round(14 * scaleFactor)}px`,
+            paddingRight: `${Math.round(14 * scaleFactor)}px`,
+            gap: `${Math.round(10 * scaleFactor)}px`,
+          }}
+          className="flex shrink-0 items-center"
+        >
+          {state.showNavButtons && (
+            <div
+              style={{
+                gap: `${Math.round(6 * scaleFactor)}px`,
+                color: navIconColor,
+              }}
+              className="flex shrink-0 items-center"
+            >
+              <IconChevronLeft
+                style={{ width: `${navIconSize}px`, height: `${navIconSize}px` }}
+                className="opacity-75"
+                stroke={2}
+              />
+              <IconChevronRight
+                style={{ width: `${navIconSize}px`, height: `${navIconSize}px` }}
+                className="opacity-30"
+                stroke={2}
+              />
+            </div>
+          )}
+
+          {/* Full-width Address / URL Pill */}
+          <div
+            style={{
+              height: `${pillHeight}px`,
+              backgroundColor: urlPillBg,
+              border: `1px solid ${urlPillBorder}`,
+              borderRadius: `${pillRadius}px`,
+              paddingLeft: `${Math.round(12 * scaleFactor)}px`,
+              paddingRight: `${Math.round(12 * scaleFactor)}px`,
+              gap: `${Math.round(8 * scaleFactor)}px`,
+            }}
+            className="flex min-w-0 flex-1 items-center"
+          >
+            <SolidPadlockSvg
+              color={accentColor}
+              style={{ width: `${lockSize}px`, height: `${lockSize}px` }}
+            />
+            <span
+              style={{
+                fontSize: `${Math.round(14.5 * scaleFactor)}px`,
+                color: accentColor,
+                letterSpacing: "-0.01em",
+              }}
+              className="min-w-0 flex-1 truncate font-medium"
+            >
+              {displayUrl}
+            </span>
+            <IconArrowUpRight
+              style={{
+                width: `${Math.round(14 * scaleFactor)}px`,
+                height: `${Math.round(14 * scaleFactor)}px`,
+                color: accentColor,
+                opacity: 0.7,
+              }}
+              className="shrink-0"
+              stroke={2.1}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       style={frameBoxStyle}
       className={cn(
-        "flex flex-col overflow-hidden ring-1 ring-black/15",
+        "relative z-10 flex flex-col overflow-hidden ring-1 ring-black/15",
         isDarkChrome ? "bg-[#09090b] text-zinc-50" : "bg-white text-zinc-950"
       )}
     >
@@ -320,11 +917,12 @@ export function WebMockupCard({
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {state.metadata?.faviconUrl ? (
+              {activeFavicon ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={state.metadata.faviconUrl}
+                  src={activeFavicon}
                   alt=""
+                  onError={() => markFailed(activeFavicon)}
                   className="size-4 rounded-xs object-contain"
                 />
               ) : (

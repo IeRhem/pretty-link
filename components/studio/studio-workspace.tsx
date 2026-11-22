@@ -7,7 +7,11 @@ import { ControlSidebar } from "@/components/studio/control-sidebar"
 import { ExportDialog } from "@/components/studio/export-dialog"
 import { PreviewStage } from "@/components/studio/preview-stage"
 import { copyStudioImageToClipboard } from "@/lib/export-canvas"
-import { ASPECT_RATIOS, GRADIENT_PRESETS } from "@/lib/presets"
+import {
+  ASPECT_RATIOS,
+  BACKGROUND_PATTERNS,
+  GRADIENT_PRESETS,
+} from "@/lib/presets"
 import { detectSocialPlatform, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import {
   DEFAULT_STUDIO_STATE,
@@ -52,6 +56,13 @@ export function StudioWorkspace() {
       if (patch.url !== undefined && patch.url.trim() !== prev.url.trim()) {
         next.metadata = null
         next.customScreenshotUrl = ""
+        if (
+          prev.url === "www.lerhem.space" &&
+          prev.tabTitle === "Lerhem Studio" &&
+          patch.tabTitle === undefined
+        ) {
+          next.tabTitle = ""
+        }
       }
       // Auto-sync social platform detection when URL changes
       if (patch.url !== undefined && patch.socialPlatform === undefined) {
@@ -172,6 +183,10 @@ export function StudioWorkspace() {
     const chromes: BrowserChromeStyle[] = ["chrome", "safari", "arc", "minimal"]
     const ratios = ASPECT_RATIOS.filter((r) => r.id !== "custom")
     const randomRatio = ratios[Math.floor(Math.random() * ratios.length)]!
+    const randomPattern =
+      BACKGROUND_PATTERNS[
+        Math.floor(Math.random() * BACKGROUND_PATTERNS.length)
+      ]!
 
     setState((prev) => ({
       ...prev,
@@ -185,6 +200,7 @@ export function StudioWorkspace() {
       gradientVia: grad.via ?? "",
       gradientTo: grad.to,
       gradientAngle: grad.angle,
+      bgPattern: randomPattern.id,
       webLayout: layouts[Math.floor(Math.random() * layouts.length)]!,
       browserChrome: chromes[Math.floor(Math.random() * chromes.length)]!,
       chromeTheme: Math.random() > 0.45 ? "light" : "dark",
@@ -207,9 +223,32 @@ export function StudioWorkspace() {
 
   const handleApplyTemplate = React.useCallback(
     (patch: Partial<StudioState>) => {
+      fetchAbortRef.current?.abort()
+      setIsFetching(false)
       setPreviewGeneration((g) => g + 1)
       setState((prev) => ({
         ...prev,
+        bgPattern: DEFAULT_STUDIO_STATE.bgPattern,
+        bgPatternOpacity: DEFAULT_STUDIO_STATE.bgPatternOpacity,
+        borderStyle: DEFAULT_STUDIO_STATE.borderStyle,
+        frameScale: DEFAULT_STUDIO_STATE.frameScale,
+        frameOffsetX: DEFAULT_STUDIO_STATE.frameOffsetX,
+        frameOffsetY: DEFAULT_STUDIO_STATE.frameOffsetY,
+        frameShadow: DEFAULT_STUDIO_STATE.frameShadow,
+        showNavButtons: DEFAULT_STUDIO_STATE.showNavButtons,
+        tabTitle: DEFAULT_STUDIO_STATE.tabTitle,
+        tabAccentColor: DEFAULT_STUDIO_STATE.tabAccentColor,
+        customFaviconUrl: DEFAULT_STUDIO_STATE.customFaviconUrl,
+        showCornerIcon: DEFAULT_STUDIO_STATE.showCornerIcon,
+        cornerIconPosition: DEFAULT_STUDIO_STATE.cornerIconPosition,
+        showPosterHeader: DEFAULT_STUDIO_STATE.showPosterHeader,
+        posterHeadline: DEFAULT_STUDIO_STATE.posterHeadline,
+        posterAccentText: DEFAULT_STUDIO_STATE.posterAccentText,
+        posterHeadlineAlign: DEFAULT_STUDIO_STATE.posterHeadlineAlign,
+        posterHeadlineSize: DEFAULT_STUDIO_STATE.posterHeadlineSize,
+        showPosterFooter: DEFAULT_STUDIO_STATE.showPosterFooter,
+        posterFooterTitle: DEFAULT_STUDIO_STATE.posterFooterTitle,
+        posterFooterSubtitle: DEFAULT_STUDIO_STATE.posterFooterSubtitle,
         ...patch,
         metadata: null,
         customScreenshotUrl: "",
