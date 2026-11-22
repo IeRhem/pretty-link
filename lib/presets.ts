@@ -82,7 +82,7 @@ export const ASPECT_RATIOS: AspectRatioPreset[] = [
     label: "Brand Poster",
     ratioLabel: "2:3",
     width: 1080,
-    height: 1600,
+    height: 1620,
     category: "portrait",
   },
   {

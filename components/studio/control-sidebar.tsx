@@ -837,9 +837,11 @@ export function ControlSidebar({
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) =>
-                  handleDataUrlUpload(e.target.files?.[0], "customFaviconUrl")
-                }
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ""
+                  handleDataUrlUpload(file, "customFaviconUrl")
+                }}
               />
               <button
                 type="button"

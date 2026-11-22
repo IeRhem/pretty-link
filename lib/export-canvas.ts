@@ -573,12 +573,14 @@ function drawPosterOverlays(
   if (state.showPosterHeader) {
     const leftX = Math.round(width * 0.08)
     const rightX = Math.round(width * (1 - 0.08))
+    const maxWidth = Math.max(40, rightX - leftX)
     const topY = Math.round(height * 0.17)
     const headlineScale = (state.posterHeadlineSize ?? 100) / 100
     const fontSize = Math.round(42 * scaleFactor * headlineScale)
     const lineHeight = fontSize * 1.08
-    const lines = state.posterHeadline.split("\n")
-    const hasAccent = Boolean(state.posterAccentText.trim())
+    const paragraphs = state.posterHeadline.split("\n")
+    const trimmedAccent = state.posterAccentText.trim()
+    const accentWords = trimmedAccent ? trimmedAccent.split(/\s+/) : []
 
     const headingFont = getResolvedFont(
       "--font-heading",
@@ -591,38 +593,76 @@ function drawPosterOverlays(
       ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(-0.03 * fontSize).toFixed(2)}px`
     }
 
-    lines.forEach((line, idx) => {
-      const y = topY + idx * lineHeight
-      const isLast = idx === lines.length - 1
-      if (isLast && hasAccent) {
-        const prefix = line ? `${line} ` : ""
-        const accentPart = state.posterAccentText
-        const w1 = ctx.measureText(prefix).width
-        const w2 = ctx.measureText(accentPart).width
-        const totalW = w1 + w2
-        let startX = leftX
-        if (state.posterHeadlineAlign === "center") {
-          startX = width / 2 - totalW / 2
-        } else if (state.posterHeadlineAlign === "right") {
-          startX = rightX - totalW
+    type HeadlineToken = { text: string; muted: boolean }
+    const visualLines: HeadlineToken[][] = []
+
+    paragraphs.forEach((para, idx) => {
+      const isLastPara = idx === paragraphs.length - 1
+      const mainWords = para.trim() ? para.trim().split(/\s+/) : []
+      const paraTokens: HeadlineToken[] = [
+        ...mainWords.map((text) => ({ text, muted: false })),
+        ...(isLastPara
+          ? accentWords.map((text) => ({ text, muted: true }))
+          : []),
+      ]
+
+      if (paraTokens.length === 0) {
+        visualLines.push([])
+        return
+      }
+
+      let currentLine: HeadlineToken[] = []
+      for (const tok of paraTokens) {
+        if (currentLine.length === 0) {
+          currentLine.push(tok)
+        } else {
+          const candidate = [...currentLine.map((t) => t.text), tok.text].join(
+            " "
+          )
+          if (ctx.measureText(candidate).width <= maxWidth) {
+            currentLine.push(tok)
+          } else {
+            visualLines.push(currentLine)
+            currentLine = [tok]
+          }
         }
-        ctx.textAlign = "left"
+      }
+      if (currentLine.length > 0) {
+        visualLines.push(currentLine)
+      }
+    })
+
+    visualLines.forEach((lineTokens, idx) => {
+      if (lineTokens.length === 0) return
+      const y = topY + idx * lineHeight
+      const mainStr = lineTokens
+        .filter((t) => !t.muted)
+        .map((t) => t.text)
+        .join(" ")
+      const accentStr = lineTokens
+        .filter((t) => t.muted)
+        .map((t) => t.text)
+        .join(" ")
+      const prefix = mainStr && accentStr ? `${mainStr} ` : mainStr
+      const w1 = prefix ? ctx.measureText(prefix).width : 0
+      const w2 = accentStr ? ctx.measureText(accentStr).width : 0
+      const totalW = w1 + w2
+
+      let startX = leftX
+      if (state.posterHeadlineAlign === "center") {
+        startX = width / 2 - totalW / 2
+      } else if (state.posterHeadlineAlign === "right") {
+        startX = rightX - totalW
+      }
+
+      ctx.textAlign = "left"
+      if (prefix) {
         ctx.fillStyle = "#FFFFFF"
         ctx.fillText(prefix, startX, y)
+      }
+      if (accentStr) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.5)"
-        ctx.fillText(accentPart, startX + w1, y)
-      } else {
-        ctx.fillStyle = "#FFFFFF"
-        if (state.posterHeadlineAlign === "left") {
-          ctx.textAlign = "left"
-          ctx.fillText(line, leftX, y)
-        } else if (state.posterHeadlineAlign === "center") {
-          ctx.textAlign = "center"
-          ctx.fillText(line, width / 2, y)
-        } else {
-          ctx.textAlign = "right"
-          ctx.fillText(line, rightX, y)
-        }
+        ctx.fillText(accentStr, startX + w1, y)
       }
     })
     ctx.restore()
@@ -2072,9 +2112,23 @@ export async function renderStudioToCanvas(
 
   await drawBackground(ctx, state, logicalW, logicalH, options.format)
 
-  const faviconSrc = state.customFaviconUrl || state.metadata?.faviconUrl || null
-  const needsFavicon = Boolean(faviconSrc) && (state.showCornerIcon || state.mode === "web")
-  const faviconImg = needsFavicon ? await loadImageSafe(faviconSrc) : null
+  const faviconCandidates = [
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+  ].filter((v): v is string => Boolean(v))
+  const needsFavicon =
+    faviconCandidates.length > 0 &&
+    (state.showCornerIcon || state.mode === "web")
+  let faviconImg: HTMLImageElement | null = null
+  if (needsFavicon) {
+    for (const candidate of faviconCandidates) {
+      const loaded = await loadImageSafe(candidate)
+      if (loaded) {
+        faviconImg = loaded
+        break
+      }
+    }
+  }
 
   drawPosterOverlays(ctx, state, logicalW, logicalH, faviconImg)
 

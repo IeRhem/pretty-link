@@ -300,7 +300,7 @@ export function WebMockupCard({
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [state.webLayout])
 
   const liveIframeUrl = React.useMemo(() => {
     const check = validatePublicUrl(state.url)
