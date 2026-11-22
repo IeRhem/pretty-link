@@ -280,11 +280,12 @@ export function ControlSidebar({
                     <Label className="text-[11px] text-muted-foreground">
                       Window Chrome
                     </Label>
-                    <div className="grid grid-cols-5 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                    <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
                       {(
                         [
                           { id: "chrome", label: "Chrome" },
                           { id: "safari", label: "Safari" },
+                          { id: "mobile", label: "Mobile" },
                           { id: "arc", label: "Arc" },
                           { id: "minimal", label: "Min" },
                           { id: "none", label: "None" },
@@ -435,6 +436,30 @@ export function ControlSidebar({
                       checked={state.showNavButtons}
                       onCheckedChange={(checked) =>
                         onChange({ showNavButtons: checked })
+                      }
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between px-0.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Scannable QR Badge
+                    </Label>
+                    <Switch
+                      checked={state.webShowQr}
+                      onCheckedChange={(checked) =>
+                        onChange({ webShowQr: checked })
+                      }
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between px-0.5">
+                    <Label className="text-xs text-muted-foreground">
+                      &ldquo;Captured from&rdquo; Badge
+                    </Label>
+                    <Switch
+                      checked={state.showCapturedFrom}
+                      onCheckedChange={(checked) =>
+                        onChange({ showCapturedFrom: checked })
                       }
                     />
                   </div>

@@ -164,9 +164,24 @@ export function ExportDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="export-filename" className="text-xs text-muted-foreground">
-              Filename
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="export-filename" className="text-xs text-muted-foreground">
+                Filename
+              </Label>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date()
+                  const pad = (n: number) => String(n).padStart(2, "0")
+                  const d = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+                  const t = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+                  setFilename(`Screenshot_${d}_${t}_Chrome`)
+                }}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                Use Screenshot_…_Chrome name
+              </button>
+            </div>
             <Input
               id="export-filename"
               value={filename}

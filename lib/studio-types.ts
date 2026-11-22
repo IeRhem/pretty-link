@@ -14,7 +14,13 @@ export type ColorFillMode = "gradient" | "solid"
 export type BorderStyle = "sharp" | "curved" | "round"
 
 export type WebLayoutStyle = "offset" | "centered" | "docked" | "floating" | "tab"
-export type BrowserChromeStyle = "chrome" | "safari" | "arc" | "minimal" | "none"
+export type BrowserChromeStyle =
+  | "chrome"
+  | "safari"
+  | "arc"
+  | "mobile"
+  | "minimal"
+  | "none"
 export type ChromeTheme = "light" | "dark" | "glass"
 export type PosterHeadlineAlign = "left" | "center" | "right"
 export type CornerIconPosition = "top-left" | "top-center" | "top-right"
@@ -127,6 +133,8 @@ export interface StudioState {
   frameOffsetY: number
   frameShadow: number
   showNavButtons: boolean
+  webShowQr: boolean
+  showCapturedFrom: boolean
   customScreenshotUrl: string
 
   // Tab showcase & poster branding options
@@ -197,6 +205,8 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   frameOffsetY: 0,
   frameShadow: 65,
   showNavButtons: true,
+  webShowQr: false,
+  showCapturedFrom: false,
   customScreenshotUrl: "",
 
   tabTitle: "",

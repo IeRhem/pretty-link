@@ -3,6 +3,7 @@ import {
   hexToTintRgba,
   resolveTabAccentColor,
 } from "@/components/studio/web-mockup-card"
+import { embedUrlMetadataInImageBlob } from "@/lib/image-metadata"
 import { resolveAspectDimensions } from "@/lib/presets"
 import { generateQrMatrix } from "@/lib/qr"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
@@ -193,6 +194,32 @@ function wrapLines(
   }
   lines.push(current)
   return lines.slice(0, maxLines)
+}
+
+function truncateTextWithEllipsis(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string {
+  if (!text || maxWidth <= 0) return ""
+  if (ctx.measureText(text).width <= maxWidth) return text
+
+  const ellipsis = "…"
+  const ellipsisW = ctx.measureText(ellipsis).width
+  if (ellipsisW > maxWidth) return ""
+
+  let low = 0
+  let high = text.length
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2)
+    if (ctx.measureText(text.slice(0, mid)).width + ellipsisW <= maxWidth) {
+      low = mid
+    } else {
+      high = mid - 1
+    }
+  }
+  const clipped = text.slice(0, low).trimEnd()
+  return clipped ? `${clipped}${ellipsis}` : ellipsis
 }
 
 function drawNoiseOverlay(
@@ -703,6 +730,346 @@ function drawPosterOverlays(
   }
 }
 
+function drawWebQrBadge(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  if (state.mode !== "web" || !state.webShowQr) return
+  const scaleFactor = Math.min(width, height) / 500
+  const qrSize = Math.round(54 * scaleFactor)
+  const qrX = Math.round(width * (1 - 0.045) - qrSize)
+  const qrY = Math.round(height * (1 - 0.045) - qrSize)
+  const qrR = Math.round(qrSize * 0.22)
+  const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
+
+  ctx.save()
+  ctx.shadowColor = "rgba(0, 0, 0, 0.2)"
+  ctx.shadowBlur = Math.round(16 * scaleFactor)
+  ctx.shadowOffsetY = Math.round(6 * scaleFactor)
+  roundedRectPath(ctx, qrX, qrY, qrSize, qrSize, qrR)
+  ctx.fillStyle = "rgba(255, 255, 255, 0.96)"
+  ctx.fill()
+  ctx.restore()
+
+  drawQrOnCanvas(ctx, targetUrl, qrX, qrY, qrSize)
+
+  ctx.save()
+  roundedRectPath(ctx, qrX, qrY, qrSize, qrSize, Math.round(qrSize * 0.14))
+  ctx.lineWidth = Math.max(1, scaleFactor)
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.1)"
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawCapturedFromBadge(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number,
+  faviconImg: HTMLImageElement | null
+) {
+  if (state.mode !== "web" || !state.showCapturedFrom) return
+
+  const scaleFactor = Math.min(width, height) / 500
+  const pillH = Math.round(30 * scaleFactor)
+  const padL = Math.round(8 * scaleFactor)
+  const padR = Math.round(12 * scaleFactor)
+  const gap = Math.round(6 * scaleFactor)
+  const iconSize = Math.round(16 * scaleFactor)
+  const arrowSize = Math.round(12 * scaleFactor)
+  const accentColor = resolveTabAccentColor(state)
+  const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
+
+  const maxPillPct =
+    state.webShowQr && !state.showPosterFooter
+      ? 0.64
+      : state.webShowQr
+        ? 0.72
+        : 0.86
+  const maxPillW = Math.round(width * maxPillPct)
+  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+  const capturedFontSize = Math.round(10.5 * scaleFactor)
+  const domainFontSize = Math.round(11 * scaleFactor)
+
+  ctx.save()
+  ctx.font = `500 ${capturedFontSize}px ${sansFont}`
+  const capturedW = ctx.measureText("Captured from").width
+
+  ctx.font = `600 ${domainFontSize}px ${sansFont}`
+  const maxDomainW = Math.max(
+    24,
+    maxPillW - padL - iconSize - gap - capturedW - gap - gap - arrowSize - padR
+  )
+  const renderedDomain = truncateTextWithEllipsis(ctx, domainLabel, maxDomainW)
+  const domainW = ctx.measureText(renderedDomain).width
+
+  const pillW = Math.round(
+    padL + iconSize + gap + capturedW + gap + domainW + gap + arrowSize + padR
+  )
+  const pillX = state.showPosterFooter
+    ? Math.round(width * 0.045)
+    : Math.round((width - pillW) / 2)
+  const pillY = Math.round(height * (1 - 0.045) - pillH)
+
+  // Drop shadow + dark pill fill
+  ctx.save()
+  ctx.shadowColor = "rgba(0, 0, 0, 0.28)"
+  ctx.shadowBlur = Math.round(18 * scaleFactor)
+  ctx.shadowOffsetY = Math.round(6 * scaleFactor)
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
+  ctx.fillStyle = "rgba(9, 9, 11, 0.9)"
+  ctx.fill()
+  ctx.restore()
+
+  // Hairline border
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
+  ctx.lineWidth = Math.max(1, scaleFactor)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"
+  ctx.stroke()
+
+  // Favicon / brand icon
+  const iconX = pillX + padL
+  const iconY = pillY + (pillH - iconSize) / 2
+  if (faviconImg) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2)
+    ctx.clip()
+    drawContainedImage(ctx, faviconImg, iconX, iconY, iconSize, iconSize)
+    ctx.restore()
+  } else {
+    drawDefaultBrandIcon(ctx, iconX, iconY, iconSize, accentColor, false)
+  }
+
+  // "Captured from" muted label
+  const textX = iconX + iconSize + gap
+  ctx.font = `500 ${capturedFontSize}px ${sansFont}`
+  ctx.fillStyle = "rgba(255, 255, 255, 0.65)"
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  ctx.fillText("Captured from", textX, pillY + pillH / 2 + 0.5)
+
+  // Bold domain
+  const domainX = textX + capturedW + gap
+  ctx.font = `600 ${domainFontSize}px ${sansFont}`
+  ctx.fillStyle = "#FFFFFF"
+  ctx.fillText(renderedDomain, domainX, pillY + pillH / 2 + 0.5)
+
+  // External link arrow
+  const arrowCx = domainX + domainW + gap + arrowSize / 2
+  const arrowCy = pillY + pillH / 2
+  const as = arrowSize * 0.28
+  ctx.save()
+  ctx.globalAlpha = 0.75
+  ctx.strokeStyle = "#FFFFFF"
+  ctx.lineWidth = Math.max(1.1, 1.6 * scaleFactor)
+  ctx.lineCap = "round"
+  ctx.lineJoin = "round"
+  ctx.beginPath()
+  ctx.moveTo(arrowCx - as, arrowCy + as)
+  ctx.lineTo(arrowCx + as, arrowCy - as)
+  ctx.moveTo(arrowCx - as * 0.2, arrowCy - as)
+  ctx.lineTo(arrowCx + as, arrowCy - as)
+  ctx.lineTo(arrowCx + as, arrowCy + as * 0.2)
+  ctx.stroke()
+  ctx.restore()
+
+  ctx.restore()
+}
+
+function drawMobileChromeBar(
+  ctx: CanvasRenderingContext2D,
+  options: {
+    x: number
+    y: number
+    w: number
+    h: number
+    pillH: number
+    padX: number
+    gap: number
+    fontSize: number
+    iconScale: number
+    displayUrl: string
+    showNavButtons: boolean
+    isDarkChrome: boolean
+    isGlassChrome: boolean
+    drawBottomBorder?: boolean
+  }
+) {
+  const {
+    x,
+    y,
+    w,
+    h,
+    pillH,
+    padX,
+    gap,
+    fontSize,
+    iconScale,
+    displayUrl,
+    showNavButtons,
+    isDarkChrome,
+    isGlassChrome,
+    drawBottomBorder = false,
+  } = options
+
+  const barBg = isDarkChrome
+    ? "#18181B"
+    : isGlassChrome
+      ? "rgba(255, 255, 255, 0.94)"
+      : "#FFFFFF"
+  const fgColor = isDarkChrome ? "#F4F4F5" : "#18181B"
+  const pillBg = isDarkChrome ? "#27272A" : "#F4F4F5"
+  const cy = y + h / 2
+
+  ctx.fillStyle = barBg
+  ctx.fillRect(x, y, w, h)
+
+  if (drawBottomBorder) {
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255, 255, 255, 0.08)"
+      : "rgba(0, 0, 0, 0.08)"
+    ctx.fillRect(x, y + h - 1, w, 1)
+  }
+
+  let leftEnd = x + padX
+  if (showNavButtons) {
+    const homeSize = Math.round(16 * iconScale)
+    const hs = homeSize * 0.42
+    const hcx = leftEnd + homeSize / 2
+    ctx.save()
+    ctx.globalAlpha = 0.85
+    ctx.strokeStyle = fgColor
+    ctx.lineWidth = Math.max(1.3, 1.8 * iconScale)
+    ctx.lineCap = "round"
+    ctx.lineJoin = "round"
+    ctx.beginPath()
+    ctx.moveTo(hcx - hs, cy - hs * 0.1)
+    ctx.lineTo(hcx, cy - hs)
+    ctx.lineTo(hcx + hs, cy - hs * 0.1)
+    ctx.lineTo(hcx + hs * 0.78, cy + hs * 0.88)
+    ctx.lineTo(hcx + hs * 0.25, cy + hs * 0.88)
+    ctx.lineTo(hcx + hs * 0.25, cy + hs * 0.25)
+    ctx.lineTo(hcx - hs * 0.25, cy + hs * 0.25)
+    ctx.lineTo(hcx - hs * 0.25, cy + hs * 0.88)
+    ctx.lineTo(hcx - hs * 0.78, cy + hs * 0.88)
+    ctx.closePath()
+    ctx.stroke()
+    ctx.restore()
+    leftEnd += homeSize + gap
+  }
+
+  // Right-side icons: (+), [1], (⋮)
+  const rightPad = padX
+  const iconGap = Math.round(10 * iconScale)
+  const dotsW = Math.round(12 * iconScale)
+  const boxSize = Math.round(16 * iconScale)
+  const plusSize = Math.round(16 * iconScale)
+
+  const dotsCx = x + w - rightPad - dotsW / 2
+  const boxX = dotsCx - dotsW / 2 - iconGap - boxSize
+  const plusCx = boxX - iconGap - plusSize / 2
+  const rightStart = plusCx - plusSize / 2
+
+  ctx.save()
+  ctx.globalAlpha = 0.85
+  ctx.fillStyle = fgColor
+  ctx.strokeStyle = fgColor
+  ctx.lineWidth = Math.max(1.3, 1.8 * iconScale)
+  ctx.lineCap = "round"
+
+  // + icon
+  const pHalf = plusSize * 0.34
+  ctx.beginPath()
+  ctx.moveTo(plusCx - pHalf, cy)
+  ctx.lineTo(plusCx + pHalf, cy)
+  ctx.moveTo(plusCx, cy - pHalf)
+  ctx.lineTo(plusCx, cy + pHalf)
+  ctx.stroke()
+
+  // [1] tab counter box
+  const boxY = cy - boxSize / 2
+  roundedRectPath(ctx, boxX, boxY, boxSize, boxSize, Math.round(4 * iconScale))
+  ctx.lineWidth = Math.max(1.2, 1.5 * iconScale)
+  ctx.stroke()
+  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+  ctx.font = `700 ${Math.round(9 * iconScale)}px ${sansFont}`
+  ctx.textAlign = "center"
+  ctx.textBaseline = "middle"
+  ctx.fillText("1", boxX + boxSize / 2, cy + 0.5)
+
+  // 3 vertical dots
+  const dotR = Math.max(1.2, 1.6 * iconScale)
+  const dotDy = Math.round(4.4 * iconScale)
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath()
+    ctx.arc(dotsCx, cy + i * dotDy, dotR, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+
+  // Rounded-full address pill
+  const pillX = leftEnd
+  const pillW = Math.max(60, rightStart - gap - pillX)
+  const pillY = cy - pillH / 2
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
+  ctx.fillStyle = pillBg
+  ctx.fill()
+  if (!isDarkChrome) {
+    ctx.lineWidth = Math.max(1, 0.8 * iconScale)
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.06)"
+    ctx.stroke()
+  }
+
+  // Tune sliders icon inside pill
+  const pillPadX = Math.round(12 * iconScale)
+  const tuneSize = Math.round(14 * iconScale)
+  const tuneX = pillX + pillPadX
+  const tuneY = cy - tuneSize / 2
+  const ts = tuneSize / 24
+  ctx.save()
+  ctx.globalAlpha = 0.75
+  ctx.translate(tuneX, tuneY)
+  ctx.scale(ts, ts)
+  ctx.strokeStyle = fgColor
+  ctx.lineWidth = 2.2
+  ctx.lineCap = "round"
+  ctx.beginPath()
+  ctx.moveTo(4, 8)
+  ctx.lineTo(7, 8)
+  ctx.moveTo(12, 8)
+  ctx.lineTo(20, 8)
+  ctx.moveTo(4, 16)
+  ctx.lineTo(12, 16)
+  ctx.moveTo(17, 16)
+  ctx.lineTo(20, 16)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(9.5, 8, 2.3, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(14.5, 16, 2.3, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.restore()
+
+  // URL text
+  const urlX = tuneX + tuneSize + Math.round(8 * iconScale)
+  const maxUrlW = Math.max(20, pillX + pillW - pillPadX - urlX)
+  ctx.save()
+  ctx.font = `500 ${fontSize}px ${sansFont}`
+  ctx.fillStyle = fgColor
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  if ("letterSpacing" in ctx) {
+    ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(-0.01 * fontSize).toFixed(2)}px`
+  }
+  const renderedUrl = truncateTextWithEllipsis(ctx, displayUrl, maxUrlW)
+  ctx.fillText(renderedUrl, urlX, cy + 0.5)
+  ctx.restore()
+}
+
 function drawWebTabShowcase(
   ctx: CanvasRenderingContext2D,
   state: StudioState,
@@ -719,6 +1086,61 @@ function drawWebTabShowcase(
 
   const isDarkChrome = state.chromeTheme === "dark"
   const isGlassChrome = state.chromeTheme === "glass"
+
+  if (state.browserChrome === "mobile") {
+    const fw = Math.round(width * 0.88 * userScale)
+    const fh = Math.round(64 * uiScale)
+    const fx = Math.round(
+      width * (0.5 + (state.frameOffsetX ?? 0) / 100) - fw / 2
+    )
+    const fy = Math.round(
+      height * (0.56 + (state.frameOffsetY ?? 0) / 100) - fh / 2
+    )
+    const frameR = Math.round(20 * uiScale)
+    const radii: [number, number, number, number] = [
+      frameR,
+      frameR,
+      frameR,
+      frameR,
+    ]
+
+    if (state.frameShadow > 0) {
+      ctx.save()
+      ctx.shadowColor = `rgba(9, 9, 14, ${0.14 + (state.frameShadow / 100) * 0.44})`
+      ctx.shadowBlur = Math.round(44 * uiScale * (state.frameShadow / 100))
+      ctx.shadowOffsetY = Math.round(20 * uiScale * (state.frameShadow / 100))
+      roundedRectPath(ctx, fx, fy, fw, fh, radii)
+      ctx.fillStyle = "#111114"
+      ctx.fill()
+      ctx.restore()
+    }
+
+    ctx.save()
+    roundedRectPath(ctx, fx, fy, fw, fh, radii)
+    ctx.clip()
+    drawMobileChromeBar(ctx, {
+      x: fx,
+      y: fy,
+      w: fw,
+      h: fh,
+      pillH: Math.round(40 * uiScale),
+      padX: Math.round(16 * uiScale),
+      gap: Math.round(12 * uiScale),
+      fontSize: Math.round(15 * uiScale),
+      iconScale: 1.2 * uiScale,
+      displayUrl,
+      showNavButtons: state.showNavButtons,
+      isDarkChrome,
+      isGlassChrome,
+    })
+    ctx.lineWidth = Math.max(1, uiScale)
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)"
+    roundedRectPath(ctx, fx, fy, fw, fh, radii)
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
+
   const stripBg = isDarkChrome
     ? "#0D0D10"
     : isGlassChrome
@@ -870,14 +1292,15 @@ function drawWebTabShowcase(
   }
 
   // Tab title
+  ctx.font = `600 ${titleFontSize}px ${sansFont}`
+  const renderedTabTitle = truncateTextWithEllipsis(ctx, tabTitleText, maxTitleW)
   ctx.fillStyle = isDarkChrome ? "#F4F4F5" : "#18181B"
   ctx.textAlign = "left"
   ctx.textBaseline = "middle"
   ctx.fillText(
-    tabTitleText,
+    renderedTabTitle,
     iconX + iconSize + tabGap,
-    tabY + tabH / 2 + 0.5,
-    maxTitleW
+    tabY + tabH / 2 + 0.5
   )
 
   // Close x button
@@ -1040,7 +1463,8 @@ function drawWebTabShowcase(
   if ("letterSpacing" in ctx) {
     ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(-0.01 * urlFontSize).toFixed(2)}px`
   }
-  ctx.fillText(displayUrl, urlStartX, pillY + pillH / 2 + 0.5, maxUrlW)
+  const renderedUrl = truncateTextWithEllipsis(ctx, displayUrl, maxUrlW)
+  ctx.fillText(renderedUrl, urlStartX, pillY + pillH / 2 + 0.5)
 
   // Subtle outer frame border ring
   ctx.lineWidth = Math.max(1, uiScale)
@@ -1079,12 +1503,12 @@ async function drawWebMode(
   const offY = (state.frameOffsetY ?? 0) / 100
 
   if (state.webLayout === "offset") {
-    const leftPct = 0.11 + (1 - userScale) * 0.24 + offX
-    const topPct = 0.265 + (1 - userScale) * 0.2 + offY
-    fx = Math.round(width * leftPct)
-    fy = Math.round(height * topPct)
-    fw = Math.max(Math.round(width * 0.4), width - fx + 12)
-    fh = Math.max(Math.round(height * 0.4), height - fy + 12)
+    const baseLeftPct = 0.11 + (1 - userScale) * 0.24
+    const baseTopPct = 0.265 + (1 - userScale) * 0.2
+    fx = Math.round(width * (baseLeftPct + offX))
+    fy = Math.round(height * (baseTopPct + offY))
+    fw = Math.round(width * (1 - baseLeftPct)) + 12
+    fh = Math.round(height * (1 - baseTopPct)) + 12
     const r = Math.round(22 * scaleFactor)
     radii = [r, 0, 0, 0]
   } else if (state.webLayout === "centered") {
@@ -1230,11 +1654,12 @@ async function drawWebMode(
     const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
     ctx.save()
     ctx.font = `500 ${Math.round(10 * scaleFactor)}px ${sansFont}`
+    const renderedTabLabel = truncateTextWithEllipsis(ctx, tabLabel, maxTabTitleW)
     ctx.fillStyle = isDarkChrome ? "#E4E4E7" : "#18181B"
     ctx.globalAlpha = 0.85
     ctx.textAlign = "left"
     ctx.textBaseline = "middle"
-    ctx.fillText(tabLabel, tabTitleX, tabCy + 0.5, maxTabTitleW)
+    ctx.fillText(renderedTabLabel, tabTitleX, tabCy + 0.5)
     ctx.restore()
 
     // New tab (+) button next to active tab
@@ -1381,6 +1806,25 @@ async function drawWebMode(
     ctx.fillText(displayUrl, pillX + pillW / 2, pillY + pillH / 2 + 0.5, pillW - 18)
     ctx.textAlign = "left"
 
+    contentTop = fy + barH
+  } else if (state.browserChrome === "mobile") {
+    const barH = Math.round(46 * scaleFactor)
+    drawMobileChromeBar(ctx, {
+      x: fx,
+      y: fy,
+      w: fw,
+      h: barH,
+      pillH: Math.round(30 * scaleFactor),
+      padX: Math.round(12 * scaleFactor),
+      gap: Math.round(10 * scaleFactor),
+      fontSize: Math.round(12 * scaleFactor),
+      iconScale: scaleFactor,
+      displayUrl,
+      showNavButtons: state.showNavButtons,
+      isDarkChrome,
+      isGlassChrome,
+      drawBottomBorder: true,
+    })
     contentTop = fy + barH
   } else if (state.browserChrome === "minimal") {
     const barH = Math.round(28 * scaleFactor)
@@ -2118,7 +2562,11 @@ export async function renderStudioToCanvas(
   ].filter((v): v is string => Boolean(v))
   const needsFavicon =
     faviconCandidates.length > 0 &&
-    (state.showCornerIcon || state.mode === "web")
+    (state.showCornerIcon ||
+      (state.mode === "web" &&
+        (state.showCapturedFrom ||
+          (state.browserChrome !== "mobile" &&
+            (state.webLayout === "tab" || state.browserChrome === "chrome")))))
   let faviconImg: HTMLImageElement | null = null
   if (needsFavicon) {
     for (const candidate of faviconCandidates) {
@@ -2134,6 +2582,8 @@ export async function renderStudioToCanvas(
 
   if (state.mode === "web") {
     await drawWebMode(ctx, state, logicalW, logicalH, faviconImg)
+    drawWebQrBadge(ctx, state, logicalW, logicalH)
+    drawCapturedFromBadge(ctx, state, logicalW, logicalH, faviconImg)
   } else {
     await drawSocialMode(ctx, state, logicalW, logicalH)
   }
@@ -2157,7 +2607,7 @@ export async function exportStudioBlob(
         ? "image/webp"
         : "image/png"
 
-  return new Promise<Blob>((resolve, reject) => {
+  const rawBlob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
         if (!blob) {
@@ -2170,6 +2620,12 @@ export async function exportStudioBlob(
       options.format === "png" ? undefined : 0.94
     )
   })
+
+  return embedUrlMetadataInImageBlob(
+    rawBlob,
+    state.url,
+    state.tabTitle || state.metadata?.title
+  )
 }
 
 export async function downloadStudioImage(

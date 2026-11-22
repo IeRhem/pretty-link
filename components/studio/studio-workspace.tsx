@@ -236,6 +236,8 @@ export function StudioWorkspace() {
         frameOffsetY: DEFAULT_STUDIO_STATE.frameOffsetY,
         frameShadow: DEFAULT_STUDIO_STATE.frameShadow,
         showNavButtons: DEFAULT_STUDIO_STATE.showNavButtons,
+        webShowQr: DEFAULT_STUDIO_STATE.webShowQr,
+        showCapturedFrom: DEFAULT_STUDIO_STATE.showCapturedFrom,
         tabTitle: DEFAULT_STUDIO_STATE.tabTitle,
         tabAccentColor: DEFAULT_STUDIO_STATE.tabAccentColor,
         customFaviconUrl: DEFAULT_STUDIO_STATE.customFaviconUrl,

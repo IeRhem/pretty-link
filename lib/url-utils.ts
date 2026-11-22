@@ -169,6 +169,8 @@ export function encodeShareState(state: StudioState): string {
     frameOffsetY: state.frameOffsetY,
     frameShadow: state.frameShadow,
     showNavButtons: state.showNavButtons,
+    webShowQr: state.webShowQr,
+    showCapturedFrom: state.showCapturedFrom,
     customScreenshotUrl: state.customScreenshotUrl.startsWith("data:")
       ? ""
       : state.customScreenshotUrl,

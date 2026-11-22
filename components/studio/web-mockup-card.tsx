@@ -5,6 +5,7 @@ import {
   IconArrowUpRight,
   IconChevronLeft,
   IconChevronRight,
+  IconDotsVertical,
   IconHome,
   IconLock,
   IconPlus,
@@ -12,8 +13,9 @@ import {
   IconWorld,
   IconX,
 } from "@tabler/icons-react"
+import { QrCodeSvg } from "@/components/studio/qr-code-svg"
 import type { StudioState } from "@/lib/studio-types"
-import { formatDisplayUrl, validatePublicUrl } from "@/lib/url-utils"
+import { formatDisplayUrl, normalizeUrl, validatePublicUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
 
 const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
@@ -121,6 +123,34 @@ function SolidPadlockSvg({
   )
 }
 
+function MobileTuneIconSvg({
+  className,
+  style,
+}: {
+  className?: string
+  style?: React.CSSProperties
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.1}
+      strokeLinecap="round"
+      className={className}
+      style={style}
+      aria-hidden="true"
+    >
+      <line x1="4" y1="8" x2="7" y2="8" />
+      <line x1="12" y1="8" x2="20" y2="8" />
+      <circle cx="9.5" cy="8" r="2.3" />
+      <line x1="4" y1="16" x2="12" y2="16" />
+      <line x1="17" y1="16" x2="20" y2="16" />
+      <circle cx="14.5" cy="16" r="2.3" />
+    </svg>
+  )
+}
+
 export function PosterOverlays({
   state,
   logicalWidth,
@@ -131,13 +161,22 @@ export function PosterOverlays({
   logicalHeight: number
 }) {
   const [failedFavicons, setFailedFavicons] = React.useState<string[]>([])
+  const showWebQr = state.mode === "web" && state.webShowQr
+  const showCapturedFrom = state.mode === "web" && state.showCapturedFrom
   const hasAnyOverlay =
-    state.showCornerIcon || state.showPosterHeader || state.showPosterFooter
+    state.showCornerIcon ||
+    state.showPosterHeader ||
+    state.showPosterFooter ||
+    showWebQr ||
+    showCapturedFrom
   if (!hasAnyOverlay) return null
 
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const accentColor = resolveTabAccentColor(state)
+  const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
+  const qrSize = Math.round(54 * scaleFactor)
+  const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
 
   const faviconCandidates = [
     state.customFaviconUrl,
@@ -176,11 +215,11 @@ export function PosterOverlays({
           }
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 select-none">
+    <div className="pointer-events-none absolute inset-0 select-none">
       {state.showCornerIcon && (
         <div
           style={cornerPosStyle}
-          className="absolute flex items-center justify-center"
+          className="absolute z-0 flex items-center justify-center"
         >
           {activeFavicon ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -217,7 +256,7 @@ export function PosterOverlays({
             letterSpacing: "-0.03em",
             fontWeight: 500,
           }}
-          className="absolute font-heading text-white"
+          className="absolute z-0 font-heading text-white"
         >
           {headlineLines.map((line, idx) => {
             const isLast = idx === headlineLines.length - 1
@@ -239,7 +278,7 @@ export function PosterOverlays({
       {state.showPosterFooter && (
         <div
           style={{ bottom: "4.5%" }}
-          className="absolute inset-x-0 flex flex-col items-center text-center"
+          className="absolute inset-x-0 z-0 flex flex-col items-center text-center"
         >
           {state.posterFooterTitle && (
             <div
@@ -264,6 +303,96 @@ export function PosterOverlays({
               {state.posterFooterSubtitle}
             </div>
           )}
+        </div>
+      )}
+
+      {showCapturedFrom && (
+        <div
+          style={{
+            bottom: "4.5%",
+            ...(state.showPosterFooter
+              ? { left: "4.5%" }
+              : { left: "50%", transform: "translateX(-50%)" }),
+            maxWidth:
+              showWebQr && !state.showPosterFooter
+                ? "64%"
+                : showWebQr
+                  ? "72%"
+                  : "86%",
+            height: `${Math.round(30 * scaleFactor)}px`,
+            paddingLeft: `${Math.round(8 * scaleFactor)}px`,
+            paddingRight: `${Math.round(12 * scaleFactor)}px`,
+            gap: `${Math.round(6 * scaleFactor)}px`,
+          }}
+          className="absolute z-20 flex items-center rounded-full bg-zinc-950/90 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-md"
+        >
+          {activeFavicon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={activeFavicon}
+              alt=""
+              onError={() =>
+                setFailedFavicons((prev) =>
+                  prev.includes(activeFavicon) ? prev : [...prev, activeFavicon]
+                )
+              }
+              style={{
+                width: `${Math.round(16 * scaleFactor)}px`,
+                height: `${Math.round(16 * scaleFactor)}px`,
+              }}
+              className="shrink-0 rounded-full object-contain"
+            />
+          ) : (
+            <BrandMarkSvg
+              accentColor={accentColor}
+              style={{
+                width: `${Math.round(16 * scaleFactor)}px`,
+                height: `${Math.round(16 * scaleFactor)}px`,
+              }}
+              className="shrink-0"
+            />
+          )}
+          <span
+            style={{
+              fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+              color: "rgba(255, 255, 255, 0.65)",
+            }}
+            className="shrink-0 font-medium whitespace-nowrap"
+          >
+            Captured from
+          </span>
+          <span
+            style={{ fontSize: `${Math.round(11 * scaleFactor)}px` }}
+            className="min-w-0 truncate font-semibold"
+          >
+            {domainLabel}
+          </span>
+          <IconArrowUpRight
+            style={{
+              width: `${Math.round(12 * scaleFactor)}px`,
+              height: `${Math.round(12 * scaleFactor)}px`,
+              opacity: 0.75,
+            }}
+            className="shrink-0"
+            stroke={2.1}
+          />
+        </div>
+      )}
+
+      {showWebQr && (
+        <div
+          style={{
+            right: "4.5%",
+            bottom: "4.5%",
+            width: `${qrSize}px`,
+            height: `${qrSize}px`,
+          }}
+          className="absolute z-20 rounded-2xl bg-white/95 p-1.5 shadow-lg ring-1 ring-black/10"
+        >
+          <QrCodeSvg
+            value={targetUrl}
+            className="size-full rounded-none bg-transparent p-0 shadow-none ring-0"
+          />
         </div>
       )}
     </div>
@@ -378,15 +507,15 @@ export function WebMockupCard({
     }
 
     if (state.webLayout === "offset") {
-      const leftPct = 11 + (1 - userScale) * 24 + offX
-      const topPct = 26.5 + (1 - userScale) * 20 + offY
+      const baseLeftPct = 11 + (1 - userScale) * 24
+      const baseTopPct = 26.5 + (1 - userScale) * 20
       return {
         ...base,
         position: "absolute",
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        width: `${Math.max(40, 100 - leftPct + 2)}%`,
-        height: `${Math.max(40, 100 - topPct + 2)}%`,
+        left: `${baseLeftPct + offX}%`,
+        top: `${baseTopPct + offY}%`,
+        width: `${100 - baseLeftPct + 2}%`,
+        height: `${100 - baseTopPct + 2}%`,
         borderTopLeftRadius: `${Math.round(22 * scaleFactor)}px`,
       }
     }
@@ -613,6 +742,48 @@ export function WebMockupCard({
       )
     }
 
+    if (state.browserChrome === "mobile") {
+      return (
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-2.5 border-b px-3 select-none",
+            isDarkChrome
+              ? "border-zinc-800 bg-[#18181b] text-zinc-100"
+              : isGlassChrome
+                ? "border-black/5 bg-white/92 text-zinc-900 backdrop-blur-md"
+                : "border-zinc-200/80 bg-white text-zinc-900"
+          )}
+          style={{ height: `${Math.round(46 * scaleFactor)}px` }}
+        >
+          {state.showNavButtons && (
+            <IconHome className="size-4 shrink-0 opacity-85" stroke={1.9} />
+          )}
+
+          <div
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2 rounded-full px-3 py-1.5",
+              isDarkChrome
+                ? "bg-zinc-800 text-zinc-100"
+                : "bg-zinc-100 text-zinc-900 ring-1 ring-black/5"
+            )}
+          >
+            <MobileTuneIconSvg className="size-3.5 shrink-0 opacity-75" />
+            <span className="truncate text-xs font-medium tracking-tight">
+              {displayUrl}
+            </span>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2.5">
+            <IconPlus className="size-4 opacity-85" stroke={2} />
+            <span className="flex size-4 items-center justify-center rounded-[4px] border-[1.5px] border-current text-[9px] leading-none font-bold opacity-85">
+              1
+            </span>
+            <IconDotsVertical className="size-4 opacity-85" stroke={2} />
+          </div>
+        </div>
+      )
+    }
+
     // minimal
     return (
       <div
@@ -632,6 +803,110 @@ export function WebMockupCard({
   }
 
   if (state.webLayout === "tab") {
+    if (state.browserChrome === "mobile") {
+      const barH = Math.round(64 * scaleFactor)
+      const pillH = Math.round(40 * scaleFactor)
+      const barBg = isDarkChrome
+        ? "#18181B"
+        : isGlassChrome
+          ? "rgba(255, 255, 255, 0.95)"
+          : "#FFFFFF"
+      const pillBg = isDarkChrome ? "#27272A" : "#F4F4F5"
+      const fgColor = isDarkChrome ? "#F4F4F5" : "#18181B"
+
+      return (
+        <div
+          style={{
+            ...frameBoxStyle,
+            height: `${barH}px`,
+            backgroundColor: barBg,
+            color: fgColor,
+            paddingLeft: `${Math.round(16 * scaleFactor)}px`,
+            paddingRight: `${Math.round(16 * scaleFactor)}px`,
+            gap: `${Math.round(12 * scaleFactor)}px`,
+          }}
+          className={cn(
+            "relative z-10 flex items-center overflow-hidden ring-1 ring-black/10 select-none",
+            isGlassChrome && "backdrop-blur-xl"
+          )}
+        >
+          {state.showNavButtons && (
+            <IconHome
+              style={{
+                width: `${Math.round(20 * scaleFactor)}px`,
+                height: `${Math.round(20 * scaleFactor)}px`,
+              }}
+              className="shrink-0 opacity-85"
+              stroke={1.9}
+            />
+          )}
+
+          <div
+            style={{
+              height: `${pillH}px`,
+              backgroundColor: pillBg,
+              paddingLeft: `${Math.round(14 * scaleFactor)}px`,
+              paddingRight: `${Math.round(14 * scaleFactor)}px`,
+              gap: `${Math.round(9 * scaleFactor)}px`,
+            }}
+            className={cn(
+              "flex min-w-0 flex-1 items-center rounded-full",
+              !isDarkChrome && "ring-1 ring-black/5"
+            )}
+          >
+            <MobileTuneIconSvg
+              style={{
+                width: `${Math.round(16 * scaleFactor)}px`,
+                height: `${Math.round(16 * scaleFactor)}px`,
+              }}
+              className="shrink-0 opacity-75"
+            />
+            <span
+              style={{
+                fontSize: `${Math.round(15 * scaleFactor)}px`,
+                letterSpacing: "-0.01em",
+              }}
+              className="min-w-0 flex-1 truncate font-medium"
+            >
+              {displayUrl}
+            </span>
+          </div>
+
+          <div
+            style={{ gap: `${Math.round(12 * scaleFactor)}px` }}
+            className="flex shrink-0 items-center"
+          >
+            <IconPlus
+              style={{
+                width: `${Math.round(20 * scaleFactor)}px`,
+                height: `${Math.round(20 * scaleFactor)}px`,
+              }}
+              className="opacity-85"
+              stroke={2}
+            />
+            <span
+              style={{
+                width: `${Math.round(19 * scaleFactor)}px`,
+                height: `${Math.round(19 * scaleFactor)}px`,
+                fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+              }}
+              className="flex items-center justify-center rounded-[5px] border-[1.75px] border-current leading-none font-bold opacity-85"
+            >
+              1
+            </span>
+            <IconDotsVertical
+              style={{
+                width: `${Math.round(19 * scaleFactor)}px`,
+                height: `${Math.round(19 * scaleFactor)}px`,
+              }}
+              className="opacity-85"
+              stroke={2}
+            />
+          </div>
+        </div>
+      )
+    }
+
     const tabBarH = Math.round(46 * scaleFactor)
     const navBarH = Math.round(58 * scaleFactor)
     const tabHeight = Math.round(38 * scaleFactor)
