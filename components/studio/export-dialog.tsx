@@ -25,12 +25,13 @@ import {
   downloadStudioImage,
 } from "@/lib/export-canvas"
 import { resolveAspectDimensions } from "@/lib/presets"
+import { getQrByteLength, QR_MAX_BYTE_LENGTH } from "@/lib/qr"
 import type {
   ExportFormat,
   ExportScale,
   StudioState,
 } from "@/lib/studio-types"
-import { encodeShareState, formatDisplayUrl } from "@/lib/url-utils"
+import { encodeShareState, formatDisplayUrl, normalizeUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
 
 export function ExportDialog({
@@ -51,6 +52,11 @@ export function ExportDialog({
   const [copiedLink, setCopiedLink] = React.useState(false)
 
   const { width, height } = resolveAspectDimensions(state)
+  const qrEnabled = state.mode === "web" ? state.webShowQr : state.socialShowQr
+  const qrByteLength = getQrByteLength(
+    normalizeUrl(state.url) || "https://www.lerhem.space"
+  )
+  const qrExceedsCapacity = qrEnabled && qrByteLength > QR_MAX_BYTE_LENGTH
   const suggestedName = React.useMemo(() => {
     const clean = formatDisplayUrl(state.url)
       .replace(/[^a-z0-9.-]+/gi, "-")
@@ -190,6 +196,15 @@ export function ExportDialog({
               className="h-9 font-mono text-xs"
             />
           </div>
+
+          {qrExceedsCapacity && (
+            <p
+              role="alert"
+              className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              URL is {qrByteLength} bytes (max {QR_MAX_BYTE_LENGTH} bytes for QR codes). Shorten the URL or disable the QR overlay to export.
+            </p>
+          )}
         </div>
 
         <DialogFooter className="flex-col gap-2 sm:flex-col">

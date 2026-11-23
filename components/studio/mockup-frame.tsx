@@ -303,6 +303,7 @@ export function MockupFrame({
             state={state}
             logicalWidth={logicalW}
             logicalHeight={logicalH}
+            previewGeneration={previewGeneration}
           />
 
           {/* Content layer */}
@@ -312,6 +313,7 @@ export function MockupFrame({
               logicalWidth={logicalW}
               logicalHeight={logicalH}
               isFetching={isFetching}
+              previewGeneration={previewGeneration}
             />
           ) : (
             <SocialMockupCard

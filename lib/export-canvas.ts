@@ -1,5 +1,6 @@
 import { parseSocialStats } from "@/components/studio/social-mockup-card"
 import {
+  getPosterFooterStackOffset,
   hexToTintRgba,
   resolveTabAccentColor,
   resolveTabUrlForeground,
@@ -64,11 +65,13 @@ function tryLoadHtmlImage(
   src: string,
   options: { crossOrigin?: string; referrerPolicy?: string; timeoutMs?: number } = {}
 ): Promise<HTMLImageElement | null> {
+  const timeoutMs = options.timeoutMs ?? 10_000
+  if (timeoutMs <= 0) return Promise.resolve(null)
   return new Promise((resolve) => {
     const img = new Image()
     if (options.crossOrigin) img.crossOrigin = options.crossOrigin
     if (options.referrerPolicy) img.referrerPolicy = options.referrerPolicy
-    const timer = setTimeout(() => resolve(null), options.timeoutMs ?? 10_000)
+    const timer = setTimeout(() => resolve(null), timeoutMs)
     img.onload = () => {
       clearTimeout(timer)
       resolve(img)
@@ -81,49 +84,134 @@ function tryLoadHtmlImage(
   })
 }
 
-async function loadImageSafe(src: string | null | undefined): Promise<HTMLImageElement | null> {
+async function loadImageSafe(
+  src: string | null | undefined,
+  deadlineMs?: number
+): Promise<HTMLImageElement | null> {
   if (!src) return null
+  const getRemainingMs = () =>
+    deadlineMs !== undefined ? deadlineMs - Date.now() : undefined
+
+  const initialRemaining = getRemainingMs()
+  if (initialRemaining !== undefined && initialRemaining <= 0) {
+    return null
+  }
 
   if (src.startsWith("/api/image-proxy?")) {
+    const direct = new URLSearchParams(src.split("?")[1] ?? "").get("url")
+    const hasDirect = Boolean(direct && /^https?:\/\//i.test(direct))
+    const proxyTimeout =
+      initialRemaining !== undefined
+        ? hasDirect
+          ? Math.max(250, Math.floor(initialRemaining * 0.6))
+          : initialRemaining
+        : 12_000
     const proxied = await tryLoadHtmlImage(src, {
       crossOrigin: "anonymous",
-      timeoutMs: 12_000,
+      timeoutMs: proxyTimeout,
     })
     if (proxied) return proxied
 
-    const direct = new URLSearchParams(src.split("?")[1] ?? "").get("url")
-    if (direct && /^https?:\/\//i.test(direct)) {
+    if (hasDirect && direct) {
+      const afterProxy = getRemainingMs()
+      if (afterProxy !== undefined && afterProxy <= 0) return null
       return tryLoadHtmlImage(direct, {
         crossOrigin: "anonymous",
         referrerPolicy: "no-referrer",
-        timeoutMs: 8_000,
+        timeoutMs: afterProxy ?? 8_000,
       })
     }
     return null
   }
 
   if (src.startsWith("data:") || src.startsWith("blob:") || src.startsWith("/")) {
-    return tryLoadHtmlImage(src, { crossOrigin: "anonymous", timeoutMs: 12_000 })
+    return tryLoadHtmlImage(src, {
+      crossOrigin: "anonymous",
+      timeoutMs: initialRemaining ?? 12_000,
+    })
   }
 
   const proxied = toImageProxyUrl(src)
+  const hasDirect = /^https?:\/\//i.test(src)
   if (proxied) {
+    const proxyTimeout =
+      initialRemaining !== undefined
+        ? hasDirect
+          ? Math.max(250, Math.floor(initialRemaining * 0.6))
+          : initialRemaining
+        : 12_000
     const viaProxy = await tryLoadHtmlImage(proxied, {
       crossOrigin: "anonymous",
-      timeoutMs: 12_000,
+      timeoutMs: proxyTimeout,
     })
     if (viaProxy) return viaProxy
   }
 
-  if (/^https?:\/\//i.test(src)) {
+  if (hasDirect) {
+    const afterProxy = getRemainingMs()
+    if (afterProxy !== undefined && afterProxy <= 0) return null
     return tryLoadHtmlImage(src, {
       crossOrigin: "anonymous",
       referrerPolicy: "no-referrer",
-      timeoutMs: 8_000,
+      timeoutMs: afterProxy ?? 8_000,
     })
   }
 
   return null
+}
+
+async function loadFaviconWithBudget(
+  candidates: string[],
+  budgetMs = 3_500
+): Promise<HTMLImageElement | null> {
+  if (candidates.length === 0) return null
+  const deadlineMs = Date.now() + budgetMs
+  const results: Array<HTMLImageElement | null | undefined> = Array(
+    candidates.length
+  ).fill(undefined)
+
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (img: HTMLImageElement | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(img)
+    }
+
+    const pickBestReady = (): HTMLImageElement | null => {
+      for (const res of results) {
+        if (res) return res
+      }
+      return null
+    }
+
+    const tryAdvance = () => {
+      if (settled) return
+      for (let i = 0; i < results.length; i++) {
+        const res = results[i]
+        if (res === undefined) {
+          return
+        }
+        if (res) {
+          finish(res)
+          return
+        }
+      }
+      finish(null)
+    }
+
+    const timer = setTimeout(() => {
+      finish(pickBestReady())
+    }, budgetMs)
+
+    candidates.forEach((src, index) => {
+      void loadImageSafe(src, deadlineMs).then((img) => {
+        results[index] = img
+        tryAdvance()
+      })
+    })
+  })
 }
 
 function drawCoverImage(
@@ -381,28 +469,22 @@ function drawPatternOverlay(
     }
     ctx.stroke()
   } else if (state.bgPattern === "spotlight") {
-    const maxDim = Math.max(width, height)
-    const g1 = ctx.createRadialGradient(
-      width * 0.2,
-      height * 0.2,
-      0,
-      width * 0.2,
-      height * 0.2,
-      maxDim * 0.55
-    )
+    const farthestCornerDistance = (cx: number, cy: number) =>
+      Math.hypot(Math.max(cx, width - cx), Math.max(cy, height - cy))
+
+    const cx1 = width * 0.2
+    const cy1 = height * 0.2
+    const r1 = farthestCornerDistance(cx1, cy1) * 0.55
+    const g1 = ctx.createRadialGradient(cx1, cy1, 0, cx1, cy1, r1)
     g1.addColorStop(0, "rgba(255, 255, 255, 0.85)")
     g1.addColorStop(1, "rgba(255, 255, 255, 0)")
     ctx.fillStyle = g1
     ctx.fillRect(0, 0, width, height)
 
-    const g2 = ctx.createRadialGradient(
-      width * 0.82,
-      height * 0.78,
-      0,
-      width * 0.82,
-      height * 0.78,
-      maxDim * 0.58
-    )
+    const cx2 = width * 0.82
+    const cy2 = height * 0.78
+    const r2 = farthestCornerDistance(cx2, cy2) * 0.58
+    const g2 = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, r2)
     g2.addColorStop(0, "rgba(255, 255, 255, 0.65)")
     g2.addColorStop(1, "rgba(255, 255, 255, 0)")
     ctx.fillStyle = g2
@@ -701,21 +783,23 @@ function drawPosterOverlays(
     const titleSize = Math.round(14 * scaleFactor)
     const subSize = Math.round(10.5 * scaleFactor)
     const gap = Math.round(2 * scaleFactor)
+    const hasTitle = Boolean(state.posterFooterTitle.trim())
+    const hasSub = Boolean(state.posterFooterSubtitle.trim())
 
     ctx.save()
     ctx.textAlign = "center"
     ctx.textBaseline = "bottom"
     let cursorBottom = bottomY
 
-    if (state.posterFooterSubtitle) {
+    if (hasSub) {
       const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
       ctx.font = `500 ${subSize}px ${sansFont}`
       ctx.fillStyle = "rgba(255, 255, 255, 0.75)"
       ctx.fillText(state.posterFooterSubtitle, width / 2, cursorBottom)
-      cursorBottom -= subSize * 1.25 + gap
+      cursorBottom -= Math.round(subSize * 1.25) + gap
     }
 
-    if (state.posterFooterTitle) {
+    if (hasTitle) {
       const headingFont = getResolvedFont(
         "--font-heading",
         '"Instrument Sans", sans-serif'
@@ -783,12 +867,12 @@ function drawCapturedFromBadge(
   const accentColor = resolveTabAccentColor(state)
   const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
 
-  const maxPillPct =
-    state.webShowQr && !state.showPosterFooter
-      ? 0.64
-      : state.webShowQr
-        ? 0.72
-        : 0.86
+  const footerOffset = getPosterFooterStackOffset(state, scaleFactor)
+  const maxPillPct = state.webShowQr
+    ? footerOffset > 0
+      ? 0.72
+      : 0.64
+    : 0.86
   const maxPillW = Math.round(width * maxPillPct)
   const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
   const capturedFontSize = Math.round(10.5 * scaleFactor)
@@ -809,10 +893,11 @@ function drawCapturedFromBadge(
   const pillW = Math.round(
     padL + iconSize + gap + capturedW + gap + domainW + gap + arrowSize + padR
   )
-  const pillX = state.showPosterFooter
-    ? Math.round(width * 0.045)
-    : Math.round((width - pillW) / 2)
-  const pillY = Math.round(height * (1 - 0.045) - pillH)
+  const pillX =
+    footerOffset > 0 && state.webShowQr
+      ? Math.round(width * 0.045)
+      : Math.round((width - pillW) / 2)
+  const pillY = Math.round(height * (1 - 0.045) - footerOffset - pillH)
 
   // Drop shadow + dark pill fill
   ctx.save()
@@ -2569,16 +2654,9 @@ export async function renderStudioToCanvas(
         (state.showCapturedFrom ||
           (state.browserChrome !== "mobile" &&
             (state.webLayout === "tab" || state.browserChrome === "chrome")))))
-  let faviconImg: HTMLImageElement | null = null
-  if (needsFavicon) {
-    for (const candidate of faviconCandidates) {
-      const loaded = await loadImageSafe(candidate)
-      if (loaded) {
-        faviconImg = loaded
-        break
-      }
-    }
-  }
+  const faviconImg = needsFavicon
+    ? await loadFaviconWithBudget(faviconCandidates)
+    : null
 
   drawPosterOverlays(ctx, state, logicalW, logicalH, faviconImg)
 
@@ -2623,10 +2701,13 @@ export async function exportStudioBlob(
     )
   })
 
+  const trimmedTabTitle =
+    typeof state.tabTitle === "string" ? state.tabTitle.trim() : ""
+
   return embedUrlMetadataInImageBlob(
     rawBlob,
     state.url,
-    state.tabTitle || state.metadata?.title
+    trimmedTabTitle || state.metadata?.title
   )
 }
 

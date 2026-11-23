@@ -46,6 +46,7 @@ export function StudioWorkspace() {
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchAbortRef = React.useRef<AbortController | null>(null)
   const lastFetchedUrlRef = React.useRef<string>("")
+  const uploadResetTokenRef = React.useRef(0)
   const drawerRef = React.useRef<HTMLDivElement>(null)
   const stageWrapperRef = React.useRef<HTMLDivElement>(null)
   const menuTriggerRef = React.useRef<HTMLButtonElement>(null)
@@ -62,7 +63,15 @@ export function StudioWorkspace() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
+  const getUploadResetToken = React.useCallback(
+    () => uploadResetTokenRef.current,
+    []
+  )
+
   const updateState = React.useCallback((patch: Partial<StudioState>) => {
+    if (patch.customFaviconUrl !== undefined) {
+      setPreviewGeneration((g) => g + 1)
+    }
     setState((prev) => {
       const next = { ...prev, ...patch }
       if (patch.url !== undefined && patch.url.trim() !== prev.url.trim()) {
@@ -220,6 +229,7 @@ export function StudioWorkspace() {
   }, [])
 
   const handleReset = React.useCallback(() => {
+    uploadResetTokenRef.current += 1
     fetchAbortRef.current?.abort()
     lastFetchedUrlRef.current = ""
     setIsFetching(false)
@@ -235,6 +245,7 @@ export function StudioWorkspace() {
 
   const handleApplyTemplate = React.useCallback(
     (patch: Partial<StudioState>) => {
+      uploadResetTokenRef.current += 1
       fetchAbortRef.current?.abort()
       setIsFetching(false)
       setPreviewGeneration((g) => g + 1)
@@ -397,6 +408,7 @@ export function StudioWorkspace() {
               setExportOpen(true)
             }}
             onQuickCopy={handleQuickCopy}
+            getUploadResetToken={getUploadResetToken}
             onCloseMobile={() => closeMobileMenu(true)}
             closeButtonRef={drawerCloseBtnRef}
           />

@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SOCIAL_PLATFORM_LIST, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
+import { getQrByteLength, QR_MAX_BYTE_LENGTH } from "@/lib/qr"
 import type {
   BorderStyle,
   BrowserChromeStyle,
@@ -48,6 +49,7 @@ import type {
   StudioState,
   WebLayoutStyle,
 } from "@/lib/studio-types"
+import { normalizeUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
 
 function BorderCornerGlyph({ variant }: { variant: BorderStyle }) {
@@ -93,6 +95,7 @@ export function ControlSidebar({
   onFetchUrl,
   onOpenExport,
   onQuickCopy,
+  getUploadResetToken,
   onCloseMobile,
   closeButtonRef,
 }: {
@@ -103,6 +106,7 @@ export function ControlSidebar({
   onFetchUrl: (urlOverride?: string) => void
   onOpenExport: () => void
   onQuickCopy: () => void
+  getUploadResetToken?: () => number
   onCloseMobile?: () => void
   closeButtonRef?: React.RefObject<HTMLButtonElement | null>
 }) {
@@ -129,15 +133,26 @@ export function ControlSidebar({
   ) => {
     if (!file || !file.type.startsWith("image/")) return
     const token = ++uploadRequestTokensRef.current[field]
+    const resetToken = getUploadResetToken?.() ?? 0
     const reader = new FileReader()
     reader.onload = () => {
-      if (uploadRequestTokensRef.current[field] !== token) return
+      if (
+        uploadRequestTokensRef.current[field] !== token ||
+        (getUploadResetToken?.() ?? 0) !== resetToken
+      ) {
+        return
+      }
       if (typeof reader.result === "string") {
         onChange({ [field]: reader.result } as Partial<StudioState>)
       }
     }
     reader.readAsDataURL(file)
   }
+
+  const qrByteLength = getQrByteLength(
+    normalizeUrl(state.url) || "https://www.lerhem.space"
+  )
+  const qrExceedsCapacity = qrByteLength > QR_MAX_BYTE_LENGTH
 
   return (
     <aside className="flex min-h-0 w-full flex-1 flex-col gap-2.5 lg:h-full lg:w-[320px] lg:flex-initial lg:shrink-0 lg:gap-3 xl:w-[332px]">
@@ -504,16 +519,26 @@ export function ControlSidebar({
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between px-0.5">
-                    <Label className="text-xs text-muted-foreground">
-                      Scannable QR Badge
-                    </Label>
-                    <Switch
-                      checked={state.webShowQr}
-                      onCheckedChange={(checked) =>
-                        onChange({ webShowQr: checked })
-                      }
-                    />
+                  <div className="space-y-1 px-0.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">
+                        Scannable QR Badge
+                      </Label>
+                      <Switch
+                        checked={state.webShowQr}
+                        onCheckedChange={(checked) =>
+                          onChange({ webShowQr: checked })
+                        }
+                      />
+                    </div>
+                    {state.webShowQr && qrExceedsCapacity && (
+                      <p
+                        role="alert"
+                        className="text-[11px] leading-snug text-destructive"
+                      >
+                        URL exceeds {QR_MAX_BYTE_LENGTH} bytes ({qrByteLength}B) for QR export. Shorten the URL or turn off the QR badge to export.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between px-0.5">
@@ -905,16 +930,26 @@ export function ControlSidebar({
                     />
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">
-                      Scannable QR Code
-                    </Label>
-                    <Switch
-                      checked={state.socialShowQr}
-                      onCheckedChange={(checked) =>
-                        onChange({ socialShowQr: checked })
-                      }
-                    />
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">
+                        Scannable QR Code
+                      </Label>
+                      <Switch
+                        checked={state.socialShowQr}
+                        onCheckedChange={(checked) =>
+                          onChange({ socialShowQr: checked })
+                        }
+                      />
+                    </div>
+                    {state.socialShowQr && qrExceedsCapacity && (
+                      <p
+                        role="alert"
+                        className="text-[11px] leading-snug text-destructive"
+                      >
+                        URL exceeds {QR_MAX_BYTE_LENGTH} bytes ({qrByteLength}B) for QR export. Shorten the URL or turn off the QR code to export.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

@@ -22,8 +22,36 @@ function crc32(bytes: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0
 }
 
+function stripInvalidXml10Chars(value: string): string {
+  let out = ""
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += value.slice(i, i + 2)
+        i++
+      }
+      continue
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      continue
+    }
+    if (
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0d ||
+      (code >= 0x20 && code <= 0xd7ff) ||
+      (code >= 0xe000 && code <= 0xfffd)
+    ) {
+      out += value[i]!
+    }
+  }
+  return out
+}
+
 function escapeXml(value: string): string {
-  return value
+  return stripInvalidXml10Chars(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -161,34 +189,41 @@ function writeAsciiZ(text: string): Uint8Array {
   return out
 }
 
-function buildExifApp1Segment(url: string): Uint8Array | null {
+function buildExifApp1Segment(
+  url: string,
+  softwareName: string | null = "PrettyLink"
+): Uint8Array | null {
   const encoder = new TextEncoder()
   const urlZ = writeAsciiZ(url)
-  const software = writeAsciiZ("Chrome")
+  const trimmedSoftware = softwareName?.trim() ?? ""
+  const software = trimmedSoftware ? writeAsciiZ(trimmedSoftware) : null
   const urlBytes = encoder.encode(url)
   const userComment = new Uint8Array(8 + urlBytes.length)
   userComment.set(encoder.encode("ASCII\0\0\0"), 0)
   userComment.set(urlBytes, 8)
 
   // Little-endian TIFF:
-  // 8-byte header + IFD0 (2 + 6*12 + 4 = 78 bytes) => Exif SubIFD at offset 86
-  // Exif SubIFD (2 + 1*12 + 4 = 18 bytes) => Data area starts at offset 104
+  // 8-byte header + IFD0 (2 + N*12 + 4 bytes) => Exif SubIFD => Data area
   const ifd0Offset = 8
-  const ifd0Size = 2 + 6 * 12 + 4
-  const exifIfdOffset = ifd0Offset + ifd0Size // 86
+  const ifd0Count = software ? 6 : 5
+  const ifd0Size = 2 + ifd0Count * 12 + 4
+  const exifIfdOffset = ifd0Offset + ifd0Size
   const exifIfdSize = 2 + 1 * 12 + 4
-  let dataCursor = exifIfdOffset + exifIfdSize // 104
+  let dataCursor = exifIfdOffset + exifIfdSize
 
-  const extraData: Uint8Array[] = []
+  const extraData: Array<{ offset: number; buf: Uint8Array }> = []
   const allocData = (buf: Uint8Array): number => {
+    if (dataCursor % 2 !== 0) {
+      dataCursor += 1
+    }
     const off = dataCursor
-    extraData.push(buf)
+    extraData.push({ offset: off, buf })
     dataCursor += buf.length
     return off
   }
 
   const urlOffset = urlZ.length > 4 ? allocData(urlZ) : 0
-  const swOffset = software.length > 4 ? allocData(software) : 0
+  const swOffset = software && software.length > 4 ? allocData(software) : 0
   const ucOffset = userComment.length > 4 ? allocData(userComment) : 0
 
   const tiffLen = dataCursor
@@ -232,15 +267,36 @@ function buildExifApp1Segment(url: string): Uint8Array | null {
     }
   }
 
-  // IFD0: count = 6 (ascending tag order: 0x010D, 0x010E, 0x011D, 0x0131, 0x013C, 0x8769)
-  tiffView.setUint16(ifd0Offset, 6, true)
-  writeIfdEntry(ifd0Offset + 2, 0x010d, 2, urlZ.length, urlOffset, urlZ) // DocumentName
-  writeIfdEntry(ifd0Offset + 14, 0x010e, 2, urlZ.length, urlOffset, urlZ) // ImageDescription
-  writeIfdEntry(ifd0Offset + 26, 0x011d, 2, urlZ.length, urlOffset, urlZ) // PageName
-  writeIfdEntry(ifd0Offset + 38, 0x0131, 2, software.length, swOffset, software) // Software
-  writeIfdEntry(ifd0Offset + 50, 0x013c, 2, urlZ.length, urlOffset, urlZ) // HostComputer
-  writeIfdEntry(ifd0Offset + 62, 0x8769, 4, 1, exifIfdOffset) // ExifIFDPointer
-  tiffView.setUint32(ifd0Offset + 74, 0, true)
+  // IFD0 entries in strictly ascending tag order
+  const ifd0Entries: Array<{
+    tag: number
+    type: number
+    count: number
+    valueOrOffset: number
+    inlineBytes?: Uint8Array
+  }> = [
+    { tag: 0x010d, type: 2, count: urlZ.length, valueOrOffset: urlOffset, inlineBytes: urlZ }, // DocumentName
+    { tag: 0x010e, type: 2, count: urlZ.length, valueOrOffset: urlOffset, inlineBytes: urlZ }, // ImageDescription
+    { tag: 0x011d, type: 2, count: urlZ.length, valueOrOffset: urlOffset, inlineBytes: urlZ }, // PageName
+    ...(software
+      ? [{ tag: 0x0131, type: 2, count: software.length, valueOrOffset: swOffset, inlineBytes: software }] // Software
+      : []),
+    { tag: 0x013c, type: 2, count: urlZ.length, valueOrOffset: urlOffset, inlineBytes: urlZ }, // HostComputer
+    { tag: 0x8769, type: 4, count: 1, valueOrOffset: exifIfdOffset }, // ExifIFDPointer
+  ]
+
+  tiffView.setUint16(ifd0Offset, ifd0Entries.length, true)
+  ifd0Entries.forEach((entry, idx) => {
+    writeIfdEntry(
+      ifd0Offset + 2 + idx * 12,
+      entry.tag,
+      entry.type,
+      entry.count,
+      entry.valueOrOffset,
+      entry.inlineBytes
+    )
+  })
+  tiffView.setUint32(ifd0Offset + 2 + ifd0Entries.length * 12, 0, true)
 
   // Exif SubIFD: count = 1 (0x9286 UserComment)
   tiffView.setUint16(exifIfdOffset, 1, true)
@@ -254,10 +310,8 @@ function buildExifApp1Segment(url: string): Uint8Array | null {
   )
   tiffView.setUint32(exifIfdOffset + 14, 0, true)
 
-  let writePos = tiffStart + exifIfdOffset + exifIfdSize
-  for (const buf of extraData) {
-    segment.set(buf, writePos)
-    writePos += buf.length
+  for (const { offset, buf } of extraData) {
+    segment.set(buf, tiffStart + offset)
   }
 
   return segment
@@ -283,7 +337,8 @@ function buildXmpApp1Segment(url: string, title?: string): Uint8Array | null {
 function injectJpegMetadata(
   bytes: Uint8Array,
   url: string,
-  title?: string
+  title?: string,
+  softwareName?: string | null
 ): Uint8Array | null {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
     return null
@@ -299,7 +354,7 @@ function injectJpegMetadata(
   }
 
   const segments: Uint8Array[] = []
-  const exifSeg = buildExifApp1Segment(url)
+  const exifSeg = buildExifApp1Segment(url, softwareName)
   if (exifSeg) segments.push(exifSeg)
   const xmpSeg = buildXmpApp1Segment(url, title)
   if (xmpSeg) segments.push(xmpSeg)
@@ -312,24 +367,48 @@ function injectJpegMetadata(
   ])
 }
 
+export function sanitizeMetadataUrl(
+  rawUrl: string,
+  includeQueryAndHash = false
+): string {
+  const normalized = normalizeUrl(rawUrl) || "https://www.lerhem.space"
+  if (includeQueryAndHash) return normalized
+  try {
+    const parsed = new URL(normalized)
+    parsed.username = ""
+    parsed.password = ""
+    parsed.search = ""
+    parsed.hash = ""
+    return parsed.toString()
+  } catch {
+    return normalized.replace(/[?#].*$/, "") || "https://www.lerhem.space"
+  }
+}
+
 export async function embedUrlMetadataInImageBlob(
   blob: Blob,
   rawUrl: string,
-  title?: string
+  title?: string,
+  options?: { includeFullUrl?: boolean; software?: string | null }
 ): Promise<Blob> {
   const type = blob.type.toLowerCase()
   if (type !== "image/png" && type !== "image/jpeg") {
     return blob
   }
 
-  const normalized = normalizeUrl(rawUrl) || "https://www.lerhem.space"
+  const metadataUrl = sanitizeMetadataUrl(
+    rawUrl,
+    options?.includeFullUrl ?? false
+  )
+  const softwareName =
+    options?.software === undefined ? "PrettyLink" : options.software
   try {
     const buffer = await blob.arrayBuffer()
     const bytes = new Uint8Array(buffer)
     const patched =
       type === "image/png"
-        ? injectPngMetadata(bytes, normalized, title)
-        : injectJpegMetadata(bytes, normalized, title)
+        ? injectPngMetadata(bytes, metadataUrl, title)
+        : injectJpegMetadata(bytes, metadataUrl, title, softwareName)
 
     if (!patched) return blob
     const outBuffer = patched.buffer.slice(

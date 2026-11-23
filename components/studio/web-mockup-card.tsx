@@ -102,7 +102,7 @@ export function resolveTabUrlForeground(
     accentRgb[2] * alpha + baseRgb[2] * (1 - alpha),
   ]
 
-  if (getContrastRatio(accentRgb, pillRgb) >= 3) {
+  if (getContrastRatio(accentRgb, pillRgb) >= 4.5) {
     return accentColor
   }
 
@@ -110,6 +110,65 @@ export function resolveTabUrlForeground(
     getContrastRatio([24, 24, 27], pillRgb)
     ? "#F4F4F5"
     : "#18181B"
+}
+
+export function getPosterFooterStackOffset(
+  state: StudioState,
+  scaleFactor: number
+): number {
+  if (!state.showPosterFooter) return 0
+  const hasTitle = Boolean(state.posterFooterTitle.trim())
+  const hasSub = Boolean(state.posterFooterSubtitle.trim())
+  if (!hasTitle && !hasSub) return 0
+  const titleH = hasTitle ? Math.round(14 * scaleFactor * 1.25) : 0
+  const subH = hasSub ? Math.round(10.5 * scaleFactor * 1.25) : 0
+  const innerGap = hasTitle && hasSub ? Math.round(2 * scaleFactor) : 0
+  const rowGap = Math.round(10 * scaleFactor)
+  return titleH + subH + innerGap + rowGap
+}
+
+function useFaviconSelection(
+  customFaviconUrl: string,
+  metadataFaviconUrl: string | null | undefined,
+  fetchedAt: string | undefined,
+  previewGeneration = 0
+) {
+  const faviconCandidates = React.useMemo(
+    () =>
+      [customFaviconUrl, metadataFaviconUrl].filter((v): v is string =>
+        Boolean(v)
+      ),
+    [customFaviconUrl, metadataFaviconUrl]
+  )
+  const faviconKey = `${previewGeneration}|${fetchedAt ?? ""}|${faviconCandidates.join("|")}`
+  const [failedState, setFailedState] = React.useState<{
+    key: string
+    urls: string[]
+  }>({ key: faviconKey, urls: [] })
+
+  const failedFavicons = React.useMemo(
+    () => (failedState.key === faviconKey ? failedState.urls : []),
+    [failedState, faviconKey]
+  )
+
+  const activeFavicon =
+    faviconCandidates.find((src) => !failedFavicons.includes(src)) ?? ""
+
+  const markFaviconFailed = React.useCallback(
+    (src: string) => {
+      if (!src) return
+      setFailedState((prev) => {
+        const current = prev.key === faviconKey ? prev.urls : []
+        if (current.includes(src)) {
+          return prev.key === faviconKey ? prev : { key: faviconKey, urls: current }
+        }
+        return { key: faviconKey, urls: [...current, src] }
+      })
+    },
+    [faviconKey]
+  )
+
+  return { activeFavicon, markFaviconFailed }
 }
 
 function BrandMarkSvg({
@@ -211,12 +270,19 @@ export function PosterOverlays({
   state,
   logicalWidth,
   logicalHeight,
+  previewGeneration = 0,
 }: {
   state: StudioState
   logicalWidth: number
   logicalHeight: number
+  previewGeneration?: number
 }) {
-  const [failedFavicons, setFailedFavicons] = React.useState<string[]>([])
+  const { activeFavicon, markFaviconFailed } = useFaviconSelection(
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+    state.metadata?.fetchedAt,
+    previewGeneration
+  )
   const showWebQr = state.mode === "web" && state.webShowQr
   const showCapturedFrom = state.mode === "web" && state.showCapturedFrom
   const hasAnyOverlay =
@@ -234,18 +300,14 @@ export function PosterOverlays({
   const qrSize = Math.round(54 * scaleFactor)
   const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
 
-  const faviconCandidates = [
-    state.customFaviconUrl,
-    state.metadata?.faviconUrl,
-  ].filter((v): v is string => Boolean(v))
-  const activeFavicon =
-    faviconCandidates.find((src) => !failedFavicons.includes(src)) ?? ""
-
   const cornerSize = Math.round(46 * scaleFactor)
   const headlineScale = (state.posterHeadlineSize ?? 100) / 100
   const headlineFontSize = Math.round(42 * scaleFactor * headlineScale)
   const headlineLines = state.posterHeadline.split("\n")
   const hasAccentText = Boolean(state.posterAccentText.trim())
+  const footerOffset = getPosterFooterStackOffset(state, scaleFactor)
+  const hasFooterTitle = Boolean(state.posterFooterTitle.trim())
+  const hasFooterSubtitle = Boolean(state.posterFooterSubtitle.trim())
 
   const cornerPosStyle: React.CSSProperties =
     state.cornerIconPosition === "top-center"
@@ -280,13 +342,10 @@ export function PosterOverlays({
           {activeFavicon ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
+              key={`${previewGeneration}-${activeFavicon}`}
               src={activeFavicon}
               alt=""
-              onError={() =>
-                setFailedFavicons((prev) =>
-                  prev.includes(activeFavicon) ? prev : [...prev, activeFavicon]
-                )
-              }
+              onError={() => markFaviconFailed(activeFavicon)}
               style={{ opacity: 0.42, filter: "brightness(1.25)" }}
               className="size-full rounded-xl object-contain"
             />
@@ -317,7 +376,7 @@ export function PosterOverlays({
           {headlineLines.map((line, idx) => {
             const isLast = idx === headlineLines.length - 1
             return (
-              <div key={idx}>
+              <div key={idx} style={{ minHeight: "1.08em" }}>
                 <span>{line}</span>
                 {isLast && hasAccentText && (
                   <span style={{ color: "rgba(255, 255, 255, 0.5)" }}>
@@ -336,10 +395,11 @@ export function PosterOverlays({
           style={{ bottom: "4.5%" }}
           className="absolute inset-x-0 z-0 flex flex-col items-center text-center"
         >
-          {state.posterFooterTitle && (
+          {hasFooterTitle && (
             <div
               style={{
                 fontSize: `${Math.round(14 * scaleFactor)}px`,
+                lineHeight: 1.25,
                 letterSpacing: "0.06em",
               }}
               className="font-heading font-bold text-white"
@@ -347,11 +407,14 @@ export function PosterOverlays({
               {state.posterFooterTitle}
             </div>
           )}
-          {state.posterFooterSubtitle && (
+          {hasFooterSubtitle && (
             <div
               style={{
                 fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-                marginTop: `${Math.round(2 * scaleFactor)}px`,
+                lineHeight: 1.25,
+                marginTop: hasFooterTitle
+                  ? `${Math.round(2 * scaleFactor)}px`
+                  : undefined,
                 color: "rgba(255, 255, 255, 0.75)",
               }}
               className="font-medium"
@@ -365,16 +428,16 @@ export function PosterOverlays({
       {showCapturedFrom && (
         <div
           style={{
-            bottom: "4.5%",
-            ...(state.showPosterFooter
+            bottom:
+              footerOffset > 0 ? `calc(4.5% + ${footerOffset}px)` : "4.5%",
+            ...(footerOffset > 0 && showWebQr
               ? { left: "4.5%" }
               : { left: "50%", transform: "translateX(-50%)" }),
-            maxWidth:
-              showWebQr && !state.showPosterFooter
-                ? "64%"
-                : showWebQr
-                  ? "72%"
-                  : "86%",
+            maxWidth: showWebQr
+              ? footerOffset > 0
+                ? "72%"
+                : "64%"
+              : "86%",
             height: `${Math.round(30 * scaleFactor)}px`,
             paddingLeft: `${Math.round(8 * scaleFactor)}px`,
             paddingRight: `${Math.round(12 * scaleFactor)}px`,
@@ -385,13 +448,10 @@ export function PosterOverlays({
           {activeFavicon ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
+              key={`${previewGeneration}-${activeFavicon}`}
               src={activeFavicon}
               alt=""
-              onError={() =>
-                setFailedFavicons((prev) =>
-                  prev.includes(activeFavicon) ? prev : [...prev, activeFavicon]
-                )
-              }
+              onError={() => markFaviconFailed(activeFavicon)}
               style={{
                 width: `${Math.round(16 * scaleFactor)}px`,
                 height: `${Math.round(16 * scaleFactor)}px`,
@@ -460,11 +520,13 @@ export function WebMockupCard({
   logicalWidth,
   logicalHeight,
   isFetching = false,
+  previewGeneration = 0,
 }: {
   state: StudioState
   logicalWidth: number
   logicalHeight: number
   isFetching?: boolean
+  previewGeneration?: number
 }) {
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
   const [failedUrls, setFailedUrls] = React.useState<string[]>([])
@@ -472,6 +534,12 @@ export function WebMockupCard({
   const viewportRef = React.useRef<HTMLDivElement>(null)
   const [viewportSize, setViewportSize] = React.useState({ width: 440, height: 320 })
   const displayUrl = formatDisplayUrl(state.url)
+  const { activeFavicon, markFaviconFailed } = useFaviconSelection(
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+    state.metadata?.fetchedAt,
+    previewGeneration
+  )
 
   React.useEffect(() => {
     const el = viewportRef.current
@@ -507,12 +575,6 @@ export function WebMockupCard({
   )
 
   const activeImage = candidates.find((src) => !failedUrls.includes(src)) ?? ""
-  const faviconCandidates = [
-    state.customFaviconUrl,
-    state.metadata?.faviconUrl,
-  ].filter((v): v is string => Boolean(v))
-  const activeFavicon =
-    faviconCandidates.find((src) => !failedUrls.includes(src)) ?? ""
   const imageReady = Boolean(activeImage) && loadedSrc === activeImage
   const iframeReady = Boolean(liveIframeUrl) && iframeLoadedUrl === liveIframeUrl
   const showLoadingHint =
@@ -668,9 +730,10 @@ export function WebMockupCard({
               {activeFavicon ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  key={`${previewGeneration}-${activeFavicon}`}
                   src={activeFavicon}
                   alt=""
-                  onError={() => markFailed(activeFavicon)}
+                  onError={() => markFaviconFailed(activeFavicon)}
                   className="size-3 shrink-0 rounded-xs object-contain"
                 />
               ) : (
@@ -1078,9 +1141,10 @@ export function WebMockupCard({
             {activeFavicon ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
+                key={`${previewGeneration}-${activeFavicon}`}
                 src={activeFavicon}
                 alt=""
-                onError={() => markFailed(activeFavicon)}
+                onError={() => markFaviconFailed(activeFavicon)}
                 style={{ width: `${iconSize}px`, height: `${iconSize}px` }}
                 className="shrink-0 rounded-sm object-contain"
               />
@@ -1252,9 +1316,10 @@ export function WebMockupCard({
               {activeFavicon ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  key={`${previewGeneration}-${activeFavicon}`}
                   src={activeFavicon}
                   alt=""
-                  onError={() => markFailed(activeFavicon)}
+                  onError={() => markFaviconFailed(activeFavicon)}
                   className="size-4 rounded-xs object-contain"
                 />
               ) : (

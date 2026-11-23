@@ -26,6 +26,7 @@ export function ShareView() {
   const searchParams = useSearchParams()
   const rawData = searchParams.get("d") ?? ""
   const [downloading, setDownloading] = React.useState(false)
+  const [downloadError, setDownloadError] = React.useState<string | null>(null)
 
   const state = React.useMemo<StudioState>(() => {
     const decoded = decodeShareState(rawData)
@@ -46,8 +47,13 @@ export function ShareView() {
 
   const handleDownload = async () => {
     setDownloading(true)
+    setDownloadError(null)
     try {
       await downloadStudioImage(state, { format: "png", scale: 2 })
+    } catch (err) {
+      setDownloadError(
+        err instanceof Error ? err.message : "Failed to export image."
+      )
     } finally {
       setDownloading(false)
     }
@@ -77,6 +83,15 @@ export function ShareView() {
       <section className="my-4 flex min-h-[280px] w-full max-w-3xl flex-1 items-center justify-center sm:my-6">
         <MockupFrame state={state} maxWidthPx={580} maxHeightPx={560} />
       </section>
+
+      {downloadError && (
+        <p
+          role="alert"
+          className="mb-3 max-w-xl rounded-xl border border-destructive/40 bg-destructive/10 px-3.5 py-2 text-center text-xs text-destructive"
+        >
+          {downloadError}
+        </p>
+      )}
 
       <footer className="flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card/90 p-2.5 shadow-lg backdrop-blur-md sm:gap-3">
         {safeHref ? (
