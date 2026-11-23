@@ -95,7 +95,12 @@ export function AspectRatioPicker({
         </span>
       </PopoverTrigger>
 
-      <PopoverContent side="right" align="start" sideOffset={12} className="w-80 p-3">
+      <PopoverContent
+        side="bottom"
+        align="start"
+        sideOffset={8}
+        className="w-[min(20rem,calc(100dvw-2rem))] p-3"
+      >
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <span className="font-heading text-xs font-semibold tracking-wider text-muted-foreground uppercase">

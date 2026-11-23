@@ -7,7 +7,11 @@ import { ControlSidebar } from "@/components/studio/control-sidebar"
 import { ExportDialog } from "@/components/studio/export-dialog"
 import { PreviewStage } from "@/components/studio/preview-stage"
 import { copyStudioImageToClipboard } from "@/lib/export-canvas"
-import { ASPECT_RATIOS, GRADIENT_PRESETS } from "@/lib/presets"
+import {
+  ASPECT_RATIOS,
+  BACKGROUND_PATTERNS,
+  GRADIENT_PRESETS,
+} from "@/lib/presets"
 import { detectSocialPlatform, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import {
   DEFAULT_STUDIO_STATE,
@@ -16,7 +20,11 @@ import {
   type StudioState,
   type WebLayoutStyle,
 } from "@/lib/studio-types"
-import { decodeShareState, encodeShareState } from "@/lib/url-utils"
+import {
+  decodeShareState,
+  encodeShareState,
+  SHARE_STATE_MAX_LENGTH,
+} from "@/lib/url-utils"
 
 export function StudioWorkspace() {
   const searchParams = useSearchParams()
@@ -35,10 +43,28 @@ export function StudioWorkspace() {
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copiedImage, setCopiedImage] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
+  const [isCompactViewport, setIsCompactViewport] = React.useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
 
+  const drawerId = React.useId()
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchAbortRef = React.useRef<AbortController | null>(null)
   const lastFetchedUrlRef = React.useRef<string>("")
+  const currentUrlRef = React.useRef<string>(state.url)
+  const uploadResetTokenRef = React.useRef(0)
+  const drawerRef = React.useRef<HTMLDivElement>(null)
+  const stageWrapperRef = React.useRef<HTMLDivElement>(null)
+  const menuTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const drawerCloseBtnRef = React.useRef<HTMLButtonElement>(null)
+  const exportOpenRef = React.useRef(exportOpen)
+
+  React.useEffect(() => {
+    exportOpenRef.current = exportOpen
+  }, [exportOpen])
+
+  React.useEffect(() => {
+    currentUrlRef.current = state.url
+  }, [state.url])
 
   const notify = React.useCallback((message: string) => {
     setToast(message)
@@ -46,12 +72,36 @@ export function StudioWorkspace() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
+  const getUploadResetToken = React.useCallback(
+    () => uploadResetTokenRef.current,
+    []
+  )
+
   const updateState = React.useCallback((patch: Partial<StudioState>) => {
+    if (patch.customFaviconUrl !== undefined) {
+      setPreviewGeneration((g) => g + 1)
+    }
+    if (patch.url !== undefined) {
+      if (patch.url.trim() !== currentUrlRef.current.trim()) {
+        fetchAbortRef.current?.abort()
+        fetchAbortRef.current = null
+        lastFetchedUrlRef.current = ""
+        setIsFetching(false)
+      }
+      currentUrlRef.current = patch.url
+    }
     setState((prev) => {
       const next = { ...prev, ...patch }
       if (patch.url !== undefined && patch.url.trim() !== prev.url.trim()) {
         next.metadata = null
         next.customScreenshotUrl = ""
+        if (
+          prev.url === "www.lerhem.space" &&
+          prev.tabTitle === "Lerhem Studio" &&
+          patch.tabTitle === undefined
+        ) {
+          next.tabTitle = ""
+        }
       }
       // Auto-sync social platform detection when URL changes
       if (patch.url !== undefined && patch.socialPlatform === undefined) {
@@ -87,7 +137,12 @@ export function StudioWorkspace() {
           { signal: controller.signal }
         )
         const data = (await res.json()) as LinkMetadata & { error?: string }
-        if (controller.signal.aborted) return
+        if (
+          controller.signal.aborted ||
+          currentUrlRef.current.trim() !== target
+        ) {
+          return
+        }
 
         if (!res.ok) {
           notify(data.error || "Could not fetch preview for that URL")
@@ -97,19 +152,22 @@ export function StudioWorkspace() {
         const platformConfig =
           SOCIAL_PLATFORMS[data.detectedPlatform] ?? SOCIAL_PLATFORMS.custom
 
-        setState((prev) => ({
-          ...prev,
-          metadata: data,
-          customScreenshotUrl: "",
-          socialPlatform: data.detectedPlatform,
-          socialDisplayName: data.title || prev.socialDisplayName,
-          socialHandle: data.handle || prev.socialHandle,
-          socialBio: data.description ?? "",
-          socialMetrics: data.metrics ?? "",
-          socialCtaLabel: platformConfig.defaultCta,
-          socialAvatarUrl: data.avatarUrl ?? "",
-          socialCoverUrl: data.coverUrl ?? "",
-        }))
+        setState((prev) => {
+          if (prev.url.trim() !== target) return prev
+          return {
+            ...prev,
+            metadata: data,
+            customScreenshotUrl: "",
+            socialPlatform: data.detectedPlatform,
+            socialDisplayName: data.title || prev.socialDisplayName,
+            socialHandle: data.handle || prev.socialHandle,
+            socialBio: data.description ?? "",
+            socialMetrics: data.metrics ?? "",
+            socialCtaLabel: platformConfig.defaultCta,
+            socialAvatarUrl: data.avatarUrl ?? "",
+            socialCoverUrl: data.coverUrl ?? "",
+          }
+        })
         setPreviewGeneration((g) => g + 1)
         notify(`Loaded preview for ${data.displayUrl}`)
       } catch (err) {
@@ -156,6 +214,12 @@ export function StudioWorkspace() {
 
   const handleShareLink = React.useCallback(async () => {
     const encoded = encodeShareState(state)
+    if (encoded.length > SHARE_STATE_MAX_LENGTH) {
+      notify(
+        "Share link is too large. Shorten text or remove long custom URLs to share."
+      )
+      return
+    }
     const shareUrl = `${window.location.origin}/share?d=${encoded}`
     try {
       await navigator.clipboard.writeText(shareUrl)
@@ -172,6 +236,10 @@ export function StudioWorkspace() {
     const chromes: BrowserChromeStyle[] = ["chrome", "safari", "arc", "minimal"]
     const ratios = ASPECT_RATIOS.filter((r) => r.id !== "custom")
     const randomRatio = ratios[Math.floor(Math.random() * ratios.length)]!
+    const randomPattern =
+      BACKGROUND_PATTERNS[
+        Math.floor(Math.random() * BACKGROUND_PATTERNS.length)
+      ]!
 
     setState((prev) => ({
       ...prev,
@@ -185,6 +253,7 @@ export function StudioWorkspace() {
       gradientVia: grad.via ?? "",
       gradientTo: grad.to,
       gradientAngle: grad.angle,
+      bgPattern: randomPattern.id,
       webLayout: layouts[Math.floor(Math.random() * layouts.length)]!,
       browserChrome: chromes[Math.floor(Math.random() * chromes.length)]!,
       chromeTheme: Math.random() > 0.45 ? "light" : "dark",
@@ -192,6 +261,7 @@ export function StudioWorkspace() {
   }, [])
 
   const handleReset = React.useCallback(() => {
+    uploadResetTokenRef.current += 1
     fetchAbortRef.current?.abort()
     lastFetchedUrlRef.current = ""
     setIsFetching(false)
@@ -207,9 +277,35 @@ export function StudioWorkspace() {
 
   const handleApplyTemplate = React.useCallback(
     (patch: Partial<StudioState>) => {
+      uploadResetTokenRef.current += 1
+      fetchAbortRef.current?.abort()
+      setIsFetching(false)
       setPreviewGeneration((g) => g + 1)
       setState((prev) => ({
         ...prev,
+        bgPattern: DEFAULT_STUDIO_STATE.bgPattern,
+        bgPatternOpacity: DEFAULT_STUDIO_STATE.bgPatternOpacity,
+        borderStyle: DEFAULT_STUDIO_STATE.borderStyle,
+        frameScale: DEFAULT_STUDIO_STATE.frameScale,
+        frameOffsetX: DEFAULT_STUDIO_STATE.frameOffsetX,
+        frameOffsetY: DEFAULT_STUDIO_STATE.frameOffsetY,
+        frameShadow: DEFAULT_STUDIO_STATE.frameShadow,
+        showNavButtons: DEFAULT_STUDIO_STATE.showNavButtons,
+        webShowQr: DEFAULT_STUDIO_STATE.webShowQr,
+        showCapturedFrom: DEFAULT_STUDIO_STATE.showCapturedFrom,
+        tabTitle: DEFAULT_STUDIO_STATE.tabTitle,
+        tabAccentColor: DEFAULT_STUDIO_STATE.tabAccentColor,
+        customFaviconUrl: DEFAULT_STUDIO_STATE.customFaviconUrl,
+        showCornerIcon: DEFAULT_STUDIO_STATE.showCornerIcon,
+        cornerIconPosition: DEFAULT_STUDIO_STATE.cornerIconPosition,
+        showPosterHeader: DEFAULT_STUDIO_STATE.showPosterHeader,
+        posterHeadline: DEFAULT_STUDIO_STATE.posterHeadline,
+        posterAccentText: DEFAULT_STUDIO_STATE.posterAccentText,
+        posterHeadlineAlign: DEFAULT_STUDIO_STATE.posterHeadlineAlign,
+        posterHeadlineSize: DEFAULT_STUDIO_STATE.posterHeadlineSize,
+        showPosterFooter: DEFAULT_STUDIO_STATE.showPosterFooter,
+        posterFooterTitle: DEFAULT_STUDIO_STATE.posterFooterTitle,
+        posterFooterSubtitle: DEFAULT_STUDIO_STATE.posterFooterSubtitle,
         ...patch,
         metadata: null,
         customScreenshotUrl: "",
@@ -222,6 +318,78 @@ export function StudioWorkspace() {
     },
     [fetchPreview]
   )
+
+  // Sync compact viewport breakpoint for the slide-over controls sidebar
+  React.useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023.98px)")
+    const syncViewport = (matches: boolean) => {
+      setIsCompactViewport(matches)
+      if (!matches) {
+        setMobileMenuOpen(false)
+      }
+    }
+    syncViewport(mq.matches)
+    const onMqChange = (e: MediaQueryListEvent) => syncViewport(e.matches)
+    mq.addEventListener("change", onMqChange)
+    return () => mq.removeEventListener("change", onMqChange)
+  }, [])
+
+  const openMobileMenu = React.useCallback(() => {
+    if (!isCompactViewport) return
+    setMobileMenuOpen(true)
+  }, [isCompactViewport])
+
+  const closeMobileMenu = React.useCallback((restoreFocus = true) => {
+    setMobileMenuOpen(false)
+    if (restoreFocus) {
+      requestAnimationFrame(() => {
+        menuTriggerRef.current?.focus()
+      })
+    }
+  }, [])
+
+  // Keep off-screen sidebar and covered preview stage inert when appropriate
+  React.useEffect(() => {
+    if (drawerRef.current) {
+      drawerRef.current.inert = isCompactViewport && !mobileMenuOpen
+    }
+    if (stageWrapperRef.current) {
+      stageWrapperRef.current.inert = isCompactViewport && mobileMenuOpen
+    }
+  }, [isCompactViewport, mobileMenuOpen])
+
+  // Move focus into sidebar when opened and support Escape key dismissal
+  React.useEffect(() => {
+    if (!isCompactViewport || !mobileMenuOpen) return
+    const rafId = requestAnimationFrame(() => {
+      drawerCloseBtnRef.current?.focus({ preventScroll: true })
+    })
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        exportOpenRef.current
+      ) {
+        return
+      }
+      if (
+        document.querySelector(
+          '[data-slot="popover-content"], [data-slot="dialog-content"]'
+        )
+      ) {
+        return
+      }
+      event.preventDefault()
+      closeMobileMenu(true)
+    }
+    document.addEventListener("keydown", onKeyDown)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      document.removeEventListener("keydown", onKeyDown)
+    }
+  }, [isCompactViewport, mobileMenuOpen, closeMobileMenu])
 
   // Keyboard shortcuts
   React.useEffect(() => {
@@ -243,35 +411,67 @@ export function StudioWorkspace() {
   }, [handleQuickCopy])
 
   return (
-    <main className="flex min-h-screen w-full flex-col gap-4 bg-background p-3 md:h-screen md:flex-row md:overflow-hidden md:p-4">
-      <ControlSidebar
-        state={state}
-        isFetching={isFetching}
-        copiedImage={copiedImage}
-        onChange={updateState}
-        onFetchUrl={fetchPreview}
-        onOpenExport={() => setExportOpen(true)}
-        onQuickCopy={handleQuickCopy}
-      />
+    <main className="flex min-h-dvh w-full flex-col gap-3 bg-background pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] sm:p-3 lg:h-dvh lg:flex-row lg:gap-4 lg:overflow-hidden lg:p-4">
+      <div
+        ref={drawerRef}
+        id={drawerId}
+        role={isCompactViewport ? "dialog" : undefined}
+        aria-label={isCompactViewport ? "Studio controls" : undefined}
+        aria-modal={isCompactViewport && mobileMenuOpen ? true : undefined}
+        data-open={mobileMenuOpen ? "true" : "false"}
+        className="studio-drawer"
+      >
+        <div
+          className="studio-drawer-backdrop"
+          aria-hidden="true"
+          onClick={() => closeMobileMenu(true)}
+        />
+        <div className="studio-drawer-sheet">
+          <ControlSidebar
+            state={state}
+            isFetching={isFetching}
+            copiedImage={copiedImage}
+            onChange={updateState}
+            onFetchUrl={fetchPreview}
+            onOpenExport={() => {
+              if (isCompactViewport && mobileMenuOpen) {
+                closeMobileMenu(false)
+              }
+              setExportOpen(true)
+            }}
+            onQuickCopy={handleQuickCopy}
+            getUploadResetToken={getUploadResetToken}
+            onCloseMobile={() => closeMobileMenu(true)}
+            closeButtonRef={drawerCloseBtnRef}
+          />
+        </div>
+      </div>
 
-      <PreviewStage
-        state={state}
-        isFetching={isFetching}
-        previewGeneration={previewGeneration}
-        onToggleTheme={handleToggleTheme}
-        onRandomize={handleRandomize}
-        onReset={handleReset}
-        onShareLink={handleShareLink}
-        onApplyTemplate={handleApplyTemplate}
-        onDropImage={(dataUrl) =>
-          updateState({
-            backgroundType: "image",
-            backgroundImageUrl: dataUrl,
-            unsplashPhotoId: "",
-            unsplashPhotographer: "",
-          })
-        }
-      />
+      <div ref={stageWrapperRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <PreviewStage
+          state={state}
+          isFetching={isFetching}
+          previewGeneration={previewGeneration}
+          drawerId={drawerId}
+          mobileMenuOpen={mobileMenuOpen}
+          onOpenMobileMenu={openMobileMenu}
+          menuTriggerRef={menuTriggerRef}
+          onOpenExport={() => setExportOpen(true)}
+          onToggleTheme={handleToggleTheme}
+          onRandomize={handleRandomize}
+          onReset={handleReset}
+          onShareLink={handleShareLink}
+          onApplyTemplate={handleApplyTemplate}
+          onDropImage={(dataUrl) =>
+            updateState({
+              backgroundType: "image",
+              backgroundImageUrl: dataUrl,
+              unsplashPhotoId: "",
+              unsplashPhotographer: "",
+            })
+          }
+        />
+      </div>
 
       <ExportDialog
         open={exportOpen}
@@ -285,7 +485,7 @@ export function StudioWorkspace() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed right-5 bottom-5 z-50 rounded-xl border border-border bg-card/95 px-4 py-2.5 text-xs font-medium text-foreground shadow-xl backdrop-blur-md"
+          className="fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-50 mx-auto max-w-sm rounded-xl border border-border bg-card/95 px-4 py-2.5 text-center text-xs font-medium text-foreground shadow-xl backdrop-blur-md sm:right-5 sm:bottom-5 sm:left-auto sm:mx-0 sm:max-w-none sm:text-left"
         >
           {toast}
         </div>

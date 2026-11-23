@@ -72,18 +72,40 @@ function computeEcc(data: Uint8Array, ecCount: number): Uint8Array {
   return work.slice(data.length)
 }
 
+export const QR_MAX_BYTE_LENGTH = 106
+
+export class QrCapacityError extends Error {
+  readonly byteLength: number
+  readonly maxBytes: number
+
+  constructor(byteLength: number, maxBytes = QR_MAX_BYTE_LENGTH) {
+    super(
+      `URL is too long for the QR code (${byteLength} bytes; maximum is ${maxBytes} bytes). Shorten the URL or disable the QR code to export.`
+    )
+    this.name = "QrCapacityError"
+    this.byteLength = byteLength
+    this.maxBytes = maxBytes
+  }
+}
+
+export function getQrByteLength(value: string): number {
+  return new TextEncoder().encode(value || "https://www.lerhem.space").length
+}
+
 function pickVersionAndBytes(text: string): { spec: VersionSpec; bytes: Uint8Array } {
   const encoded = new TextEncoder().encode(text || "https://www.lerhem.space")
   // Max capacity at V6-M Byte mode is 106 bytes (108 data codewords - 12 bits header)
-  const clamped = encoded.length > 106 ? encoded.slice(0, 106) : encoded
+  if (encoded.length > QR_MAX_BYTE_LENGTH) {
+    throw new QrCapacityError(encoded.length)
+  }
 
   for (const spec of VERSION_SPECS) {
     const capacityBytes = Math.floor((spec.dataCodewords * 8 - 12) / 8)
-    if (clamped.length <= capacityBytes) {
-      return { spec, bytes: clamped }
+    if (encoded.length <= capacityBytes) {
+      return { spec, bytes: encoded }
     }
   }
-  return { spec: VERSION_SPECS[VERSION_SPECS.length - 1]!, bytes: clamped }
+  return { spec: VERSION_SPECS[VERSION_SPECS.length - 1]!, bytes: encoded }
 }
 
 function encodeCodewords(spec: VersionSpec, bytes: Uint8Array): Uint8Array {

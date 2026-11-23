@@ -1,4 +1,4 @@
-import type { StudioState } from "@/lib/studio-types"
+import { DEFAULT_STUDIO_STATE, type StudioState } from "@/lib/studio-types"
 
 export function normalizeUrl(raw: string): string {
   const trimmed = raw.trim()
@@ -151,6 +151,8 @@ export function encodeShareState(state: StudioState): string {
     gradientAngle: state.gradientAngle,
     solidColor: state.solidColor,
     noiseOverlay: state.noiseOverlay,
+    bgPattern: state.bgPattern,
+    bgPatternOpacity: state.bgPatternOpacity,
     backgroundImageUrl: state.backgroundImageUrl.startsWith("data:")
       ? ""
       : state.backgroundImageUrl,
@@ -163,10 +165,30 @@ export function encodeShareState(state: StudioState): string {
     browserChrome: state.browserChrome,
     chromeTheme: state.chromeTheme,
     frameScale: state.frameScale,
+    frameOffsetX: state.frameOffsetX,
+    frameOffsetY: state.frameOffsetY,
     frameShadow: state.frameShadow,
+    showNavButtons: state.showNavButtons,
+    webShowQr: state.webShowQr,
+    showCapturedFrom: state.showCapturedFrom,
     customScreenshotUrl: state.customScreenshotUrl.startsWith("data:")
       ? ""
       : state.customScreenshotUrl,
+    tabTitle: state.tabTitle,
+    tabAccentColor: state.tabAccentColor,
+    customFaviconUrl: state.customFaviconUrl.startsWith("data:")
+      ? ""
+      : state.customFaviconUrl,
+    showCornerIcon: state.showCornerIcon,
+    cornerIconPosition: state.cornerIconPosition,
+    showPosterHeader: state.showPosterHeader,
+    posterHeadline: state.posterHeadline,
+    posterAccentText: state.posterAccentText,
+    posterHeadlineAlign: state.posterHeadlineAlign,
+    posterHeadlineSize: state.posterHeadlineSize,
+    showPosterFooter: state.showPosterFooter,
+    posterFooterTitle: state.posterFooterTitle,
+    posterFooterSubtitle: state.posterFooterSubtitle,
     socialPlatform: state.socialPlatform,
     socialCardStyle: state.socialCardStyle,
     socialCardTheme: state.socialCardTheme,
@@ -187,12 +209,97 @@ export function encodeShareState(state: StudioState): string {
   return toBase64Url(JSON.stringify(compact))
 }
 
+export const SHARE_STATE_MAX_LENGTH = 8192
+
+const SHARE_ENUM_VALUES: Partial<
+  Record<keyof StudioState, ReadonlySet<string>>
+> = {
+  mode: new Set(["web", "social"]),
+  backgroundType: new Set(["none", "color", "image", "unsplash"]),
+  colorFillMode: new Set(["gradient", "solid"]),
+  bgPattern: new Set([
+    "none",
+    "dots",
+    "grid",
+    "diagonal",
+    "cross",
+    "rings",
+    "diamond",
+    "spotlight",
+  ]),
+  borderStyle: new Set(["sharp", "curved", "round"]),
+  webLayout: new Set(["offset", "centered", "docked", "floating", "tab"]),
+  browserChrome: new Set([
+    "chrome",
+    "safari",
+    "arc",
+    "mobile",
+    "minimal",
+    "none",
+  ]),
+  chromeTheme: new Set(["light", "dark", "glass"]),
+  cornerIconPosition: new Set(["top-left", "top-center", "top-right"]),
+  posterHeadlineAlign: new Set(["left", "center", "right"]),
+  socialPlatform: new Set([
+    "x",
+    "github",
+    "instagram",
+    "linkedin",
+    "youtube",
+    "tiktok",
+    "threads",
+    "bluesky",
+    "dribbble",
+    "spotify",
+    "twitch",
+    "discord",
+    "custom",
+  ]),
+  socialCardStyle: new Set(["glass", "elevated", "browser", "pill", "bento"]),
+  socialCardTheme: new Set(["light", "dark", "glass"]),
+}
+
 export function decodeShareState(encoded: string): Partial<StudioState> | null {
-  if (!encoded || encoded.length > 8192) return null
+  if (!encoded || encoded.length > SHARE_STATE_MAX_LENGTH) return null
   try {
     const parsed = JSON.parse(fromBase64Url(encoded))
-    if (!parsed || typeof parsed !== "object") return null
-    return parsed as Partial<StudioState>
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null
+    }
+    const raw = parsed as Record<string, unknown>
+    const validated: Record<string, unknown> = {}
+
+    for (const key of Object.keys(DEFAULT_STUDIO_STATE) as Array<
+      keyof StudioState
+    >) {
+      if (key === "metadata" || !(key in raw)) continue
+      const val = raw[key]
+      const defaultVal = DEFAULT_STUDIO_STATE[key]
+      const enumSet = SHARE_ENUM_VALUES[key]
+
+      if (enumSet) {
+        if (typeof val === "string" && enumSet.has(val)) {
+          validated[key] = val
+        }
+        continue
+      }
+
+      if (typeof defaultVal === "string") {
+        if (typeof val === "string") {
+          validated[key] = val
+        }
+      } else if (typeof defaultVal === "number") {
+        if (typeof val === "number" && Number.isFinite(val)) {
+          validated[key] = val
+        }
+      } else if (typeof defaultVal === "boolean") {
+        if (typeof val === "boolean") {
+          validated[key] = val
+        }
+      }
+    }
+
+    return validated as Partial<StudioState>
   } catch {
     return null
   }

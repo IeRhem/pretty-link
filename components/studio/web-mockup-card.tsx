@@ -2,27 +2,627 @@
 
 import * as React from "react"
 import {
+  IconArrowUpRight,
   IconChevronLeft,
   IconChevronRight,
+  IconDotsVertical,
   IconHome,
   IconLock,
+  IconPlus,
   IconRefresh,
   IconWorld,
+  IconX,
 } from "@tabler/icons-react"
+import { QrCodeSvg } from "@/components/studio/qr-code-svg"
 import type { StudioState } from "@/lib/studio-types"
-import { formatDisplayUrl, validatePublicUrl } from "@/lib/url-utils"
+import { formatDisplayUrl, normalizeUrl, validatePublicUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
+
+const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+
+export function resolveTabAccentColor(state: StudioState): string {
+  const custom =
+    typeof state.tabAccentColor === "string"
+      ? state.tabAccentColor.trim()
+      : ""
+  if (HEX_COLOR_RE.test(custom)) return custom
+
+  const theme =
+    typeof state.metadata?.themeColor === "string"
+      ? state.metadata.themeColor.trim()
+      : ""
+  if (theme && HEX_COLOR_RE.test(theme)) return theme
+
+  if (state.backgroundType === "color") {
+    const rawBgHex =
+      state.colorFillMode === "solid" ? state.solidColor : state.gradientFrom
+    const bgHex = typeof rawBgHex === "string" ? rawBgHex.trim() : ""
+    if (HEX_COLOR_RE.test(bgHex)) return bgHex
+  }
+
+  return "#38A869"
+}
+
+function parseHexRgb(hex: string): [number, number, number] {
+  const clean = hex.trim().replace(/^#/, "")
+  let r = 56
+  let g = 168
+  let b = 105
+  if (clean.length === 3) {
+    r = parseInt(clean[0]! + clean[0]!, 16)
+    g = parseInt(clean[1]! + clean[1]!, 16)
+    b = parseInt(clean[2]! + clean[2]!, 16)
+  } else if (clean.length === 6) {
+    r = parseInt(clean.slice(0, 2), 16)
+    g = parseInt(clean.slice(2, 4), 16)
+    b = parseInt(clean.slice(4, 6), 16)
+  }
+  if ([r, g, b].some((n) => Number.isNaN(n))) {
+    return [56, 168, 105]
+  }
+  return [r, g, b]
+}
+
+export function hexToTintRgba(hex: string, alpha: number): string {
+  const [r, g, b] = parseHexRgb(hex)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function getRelativeLuminance([r, g, b]: readonly [number, number, number]): number {
+  const toLinear = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
+}
+
+function getContrastRatio(
+  rgbA: readonly [number, number, number],
+  rgbB: readonly [number, number, number]
+): number {
+  const lumA = getRelativeLuminance(rgbA)
+  const lumB = getRelativeLuminance(rgbB)
+  const lighter = Math.max(lumA, lumB)
+  const darker = Math.min(lumA, lumB)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+export function resolveTabUrlForeground(
+  accentColor: string,
+  isDarkChrome: boolean,
+  isGlassChrome = false
+): string {
+  const accentRgb = parseHexRgb(accentColor)
+  // Glass Header uses a translucent bar (rgba(255, 255, 255, 0.95));
+  // evaluate against the darkest supported backdrop (#000000 => 242) as well as white (#FFFFFF => 255).
+  const baseRgb: readonly [number, number, number] = isDarkChrome
+    ? [24, 24, 27]
+    : isGlassChrome
+      ? [242, 242, 242]
+      : [255, 255, 255]
+  const alpha = isDarkChrome ? 0.18 : 0.1
+  const pillRgb: [number, number, number] = [
+    accentRgb[0] * alpha + baseRgb[0] * (1 - alpha),
+    accentRgb[1] * alpha + baseRgb[1] * (1 - alpha),
+    accentRgb[2] * alpha + baseRgb[2] * (1 - alpha),
+  ]
+
+  let passes = getContrastRatio(accentRgb, pillRgb) >= 4.5
+  if (passes && !isDarkChrome && isGlassChrome) {
+    const lightPillRgb: [number, number, number] = [
+      accentRgb[0] * alpha + 255 * (1 - alpha),
+      accentRgb[1] * alpha + 255 * (1 - alpha),
+      accentRgb[2] * alpha + 255 * (1 - alpha),
+    ]
+    passes = getContrastRatio(accentRgb, lightPillRgb) >= 4.5
+  }
+
+  if (passes) {
+    return accentColor
+  }
+
+  return getContrastRatio([244, 244, 245], pillRgb) >=
+    getContrastRatio([24, 24, 27], pillRgb)
+    ? "#F4F4F5"
+    : "#18181B"
+}
+
+function countWrappedTextLines(
+  text: string,
+  maxWidthPx: number,
+  approxCharWidthPx: number
+): number {
+  const trimmed = text.trim()
+  if (!trimmed) return 0
+  if (maxWidthPx <= 0 || approxCharWidthPx <= 0) return 1
+  const maxCharsPerLine = Math.max(
+    1,
+    Math.floor(maxWidthPx / approxCharWidthPx)
+  )
+  let totalLines = 0
+  for (const rawLine of trimmed.split("\n")) {
+    const words = rawLine.trim().split(/\s+/).filter(Boolean)
+    if (words.length === 0) {
+      totalLines += 1
+      continue
+    }
+    let lines = 1
+    let currentLen = 0
+    for (const word of words) {
+      if (word.length > maxCharsPerLine) {
+        if (currentLen > 0) {
+          lines += 1
+          currentLen = 0
+        }
+        lines += Math.floor((word.length - 1) / maxCharsPerLine)
+        currentLen = word.length % maxCharsPerLine || maxCharsPerLine
+      } else if (currentLen === 0) {
+        currentLen = word.length
+      } else if (currentLen + 1 + word.length <= maxCharsPerLine) {
+        currentLen += 1 + word.length
+      } else {
+        lines += 1
+        currentLen = word.length
+      }
+    }
+    totalLines += lines
+  }
+  return Math.max(1, totalLines)
+}
+
+export function getPosterFooterStackOffset(
+  state: StudioState,
+  scaleFactor: number,
+  canvasWidth = 500 * scaleFactor
+): number {
+  if (!state.showPosterFooter) return 0
+  const hasTitle = Boolean(state.posterFooterTitle.trim())
+  const hasSub = Boolean(state.posterFooterSubtitle.trim())
+  if (!hasTitle && !hasSub) return 0
+  const maxFooterWidth = Math.max(80, Math.round(canvasWidth * 0.84))
+  const titleFontSize = Math.round(14 * scaleFactor)
+  const subFontSize = Math.round(10.5 * scaleFactor)
+  const titleLines = hasTitle
+    ? countWrappedTextLines(
+        state.posterFooterTitle,
+        maxFooterWidth,
+        titleFontSize * 0.64
+      )
+    : 0
+  const subLines = hasSub
+    ? countWrappedTextLines(
+        state.posterFooterSubtitle,
+        maxFooterWidth,
+        subFontSize * 0.56
+      )
+    : 0
+  const titleH = titleLines * Math.round(14 * scaleFactor * 1.25)
+  const subH = subLines * Math.round(10.5 * scaleFactor * 1.25)
+  const innerGap = hasTitle && hasSub ? Math.round(2 * scaleFactor) : 0
+  const rowGap = Math.round(10 * scaleFactor)
+  return titleH + subH + innerGap + rowGap
+}
+
+function useFaviconSelection(
+  customFaviconUrl: string,
+  metadataFaviconUrl: string | null | undefined,
+  fetchedAt: string | undefined,
+  previewGeneration = 0
+) {
+  const faviconCandidates = React.useMemo(
+    () =>
+      [customFaviconUrl, metadataFaviconUrl].filter((v): v is string =>
+        Boolean(v)
+      ),
+    [customFaviconUrl, metadataFaviconUrl]
+  )
+  const faviconKey = `${previewGeneration}|${fetchedAt ?? ""}|${faviconCandidates.join("|")}`
+  const [failedState, setFailedState] = React.useState<{
+    key: string
+    urls: string[]
+  }>({ key: faviconKey, urls: [] })
+
+  const failedFavicons = React.useMemo(
+    () => (failedState.key === faviconKey ? failedState.urls : []),
+    [failedState, faviconKey]
+  )
+
+  const activeFavicon =
+    faviconCandidates.find((src) => !failedFavicons.includes(src)) ?? ""
+
+  const markFaviconFailed = React.useCallback(
+    (src: string) => {
+      if (!src) return
+      setFailedState((prev) => {
+        const current = prev.key === faviconKey ? prev.urls : []
+        if (current.includes(src)) {
+          return prev.key === faviconKey ? prev : { key: faviconKey, urls: current }
+        }
+        return { key: faviconKey, urls: [...current, src] }
+      })
+    },
+    [faviconKey]
+  )
+
+  return { activeFavicon, markFaviconFailed }
+}
+
+function BrandMarkSvg({
+  accentColor,
+  monochrome = false,
+  className,
+  style,
+}: {
+  accentColor: string
+  monochrome?: boolean
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const badgeFill = monochrome
+    ? "rgba(255, 255, 255, 0.22)"
+    : hexToTintRgba(accentColor, 0.16)
+  const backFacet = monochrome
+    ? "rgba(255, 255, 255, 0.36)"
+    : hexToTintRgba(accentColor, 0.48)
+  const frontFacet = monochrome ? "rgba(255, 255, 255, 0.72)" : accentColor
+
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      className={className}
+      style={style}
+      aria-hidden="true"
+    >
+      <rect x="8" y="8" width="84" height="84" rx="24" fill={badgeFill} />
+      <rect x="27" y="27" width="33" height="33" rx="10" fill={backFacet} />
+      <rect x="40" y="40" width="33" height="33" rx="10" fill={frontFacet} />
+      <rect
+        x="45"
+        y="45"
+        width="10"
+        height="10"
+        rx="3.5"
+        fill="rgba(255, 255, 255, 0.9)"
+      />
+    </svg>
+  )
+}
+
+function SolidPadlockSvg({
+  color,
+  style,
+}: {
+  color: string
+  style?: React.CSSProperties
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      style={style}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <path
+        d="M7.5 10V7.5C7.5 5.01472 9.51472 3 12 3C14.4853 3 16.5 5.01472 16.5 7.5V10"
+        stroke={color}
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
+      <rect x="4.5" y="9.5" width="15" height="11.5" rx="3.2" fill={color} />
+    </svg>
+  )
+}
+
+function MobileTuneIconSvg({
+  className,
+  style,
+}: {
+  className?: string
+  style?: React.CSSProperties
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.1}
+      strokeLinecap="round"
+      className={className}
+      style={style}
+      aria-hidden="true"
+    >
+      <line x1="4" y1="8" x2="7" y2="8" />
+      <line x1="12" y1="8" x2="20" y2="8" />
+      <circle cx="9.5" cy="8" r="2.3" />
+      <line x1="4" y1="16" x2="12" y2="16" />
+      <line x1="17" y1="16" x2="20" y2="16" />
+      <circle cx="14.5" cy="16" r="2.3" />
+    </svg>
+  )
+}
+
+export function PosterOverlays({
+  state,
+  logicalWidth,
+  logicalHeight,
+  previewGeneration = 0,
+}: {
+  state: StudioState
+  logicalWidth: number
+  logicalHeight: number
+  previewGeneration?: number
+}) {
+  const { activeFavicon, markFaviconFailed } = useFaviconSelection(
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+    state.metadata?.fetchedAt,
+    previewGeneration
+  )
+  const showWebQr = state.mode === "web" && state.webShowQr
+  const showCapturedFrom = state.mode === "web" && state.showCapturedFrom
+  const hasAnyOverlay =
+    state.showCornerIcon ||
+    state.showPosterHeader ||
+    state.showPosterFooter ||
+    showWebQr ||
+    showCapturedFrom
+  if (!hasAnyOverlay) return null
+
+  const minDim = Math.min(logicalWidth, logicalHeight)
+  const scaleFactor = minDim / 500
+  const accentColor = resolveTabAccentColor(state)
+  const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
+  const qrSize = Math.round(54 * scaleFactor)
+  const activeMetadata =
+    state.metadata &&
+    (!state.metadata.requestedUrl ||
+      normalizeUrl(state.metadata.requestedUrl) === normalizeUrl(state.url))
+      ? state.metadata
+      : null
+  const domainLabel = activeMetadata?.domain || formatDisplayUrl(state.url)
+
+  const cornerSize = Math.round(46 * scaleFactor)
+  const headlineScale = (state.posterHeadlineSize ?? 100) / 100
+  const headlineFontSize = Math.round(42 * scaleFactor * headlineScale)
+  const headlineLines = state.posterHeadline.split("\n")
+  const hasAccentText = Boolean(state.posterAccentText.trim())
+  const footerOffset = getPosterFooterStackOffset(
+    state,
+    scaleFactor,
+    logicalWidth
+  )
+  const hasFooterTitle = Boolean(state.posterFooterTitle.trim())
+  const hasFooterSubtitle = Boolean(state.posterFooterSubtitle.trim())
+  const hasVisibleFooter =
+    state.showPosterFooter && (hasFooterTitle || hasFooterSubtitle)
+
+  const cornerPosStyle: React.CSSProperties =
+    state.cornerIconPosition === "top-center"
+      ? {
+          left: "50%",
+          top: "5.5%",
+          transform: "translateX(-50%)",
+          width: `${cornerSize}px`,
+          height: `${cornerSize}px`,
+        }
+      : state.cornerIconPosition === "top-right"
+        ? {
+            right: "7.5%",
+            top: "5.5%",
+            width: `${cornerSize}px`,
+            height: `${cornerSize}px`,
+          }
+        : {
+            left: "7.5%",
+            top: "5.5%",
+            width: `${cornerSize}px`,
+            height: `${cornerSize}px`,
+          }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 select-none">
+      {state.showCornerIcon && (
+        <div
+          style={cornerPosStyle}
+          className="absolute z-0 flex items-center justify-center"
+        >
+          {activeFavicon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`${previewGeneration}-${activeFavicon}`}
+              src={activeFavicon}
+              alt=""
+              onError={() => markFaviconFailed(activeFavicon)}
+              style={{ opacity: 0.42, filter: "brightness(1.25)" }}
+              className="size-full rounded-xl object-contain"
+            />
+          ) : (
+            <BrandMarkSvg
+              accentColor={accentColor}
+              monochrome
+              className="size-full"
+            />
+          )}
+        </div>
+      )}
+
+      {state.showPosterHeader && (
+        <div
+          style={{
+            top: "17%",
+            left: "8%",
+            right: "8%",
+            textAlign: state.posterHeadlineAlign,
+            fontSize: `${headlineFontSize}px`,
+            lineHeight: 1.08,
+            letterSpacing: "-0.03em",
+            fontWeight: 500,
+          }}
+          className="absolute z-0 font-heading text-white"
+        >
+          {headlineLines.map((line, idx) => {
+            const isLast = idx === headlineLines.length - 1
+            return (
+              <div key={idx} style={{ minHeight: "1.08em" }}>
+                <span>{line}</span>
+                {isLast && hasAccentText && (
+                  <span style={{ color: "rgba(255, 255, 255, 0.5)" }}>
+                    {line ? " " : ""}
+                    {state.posterAccentText}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {(hasVisibleFooter || showCapturedFrom) && (
+        <div
+          style={{
+            bottom: "4.5%",
+            gap:
+              hasVisibleFooter && showCapturedFrom
+                ? `${Math.round(10 * scaleFactor)}px`
+                : undefined,
+          }}
+          className="absolute inset-x-0 z-20 flex flex-col items-center"
+        >
+          {showCapturedFrom && (
+            <div
+              style={{
+                ...(footerOffset > 0 && showWebQr
+                  ? { alignSelf: "flex-start", marginLeft: "4.5%" }
+                  : undefined),
+                maxWidth: showWebQr
+                  ? footerOffset > 0
+                    ? "72%"
+                    : "64%"
+                  : "86%",
+                height: `${Math.round(30 * scaleFactor)}px`,
+                paddingLeft: `${Math.round(8 * scaleFactor)}px`,
+                paddingRight: `${Math.round(12 * scaleFactor)}px`,
+                gap: `${Math.round(6 * scaleFactor)}px`,
+              }}
+              className="flex items-center rounded-full bg-zinc-950/90 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-md"
+            >
+              {activeFavicon ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${previewGeneration}-${activeFavicon}`}
+                  src={activeFavicon}
+                  alt=""
+                  onError={() => markFaviconFailed(activeFavicon)}
+                  style={{
+                    width: `${Math.round(16 * scaleFactor)}px`,
+                    height: `${Math.round(16 * scaleFactor)}px`,
+                  }}
+                  className="shrink-0 rounded-full object-contain"
+                />
+              ) : (
+                <BrandMarkSvg
+                  accentColor={accentColor}
+                  style={{
+                    width: `${Math.round(16 * scaleFactor)}px`,
+                    height: `${Math.round(16 * scaleFactor)}px`,
+                  }}
+                  className="shrink-0"
+                />
+              )}
+              <span
+                style={{
+                  fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+                  color: "rgba(255, 255, 255, 0.65)",
+                }}
+                className="shrink-0 font-medium whitespace-nowrap"
+              >
+                Captured from
+              </span>
+              <span
+                style={{ fontSize: `${Math.round(11 * scaleFactor)}px` }}
+                className="min-w-0 truncate font-semibold"
+              >
+                {domainLabel}
+              </span>
+              <IconArrowUpRight
+                style={{
+                  width: `${Math.round(12 * scaleFactor)}px`,
+                  height: `${Math.round(12 * scaleFactor)}px`,
+                  opacity: 0.75,
+                }}
+                className="shrink-0"
+                stroke={2.1}
+              />
+            </div>
+          )}
+
+          {hasVisibleFooter && (
+            <div className="flex max-w-[84%] flex-col items-center text-center">
+              {hasFooterTitle && (
+                <div
+                  style={{
+                    fontSize: `${Math.round(14 * scaleFactor)}px`,
+                    lineHeight: 1.25,
+                    letterSpacing: "0.06em",
+                  }}
+                  className="font-heading font-bold text-white"
+                >
+                  {state.posterFooterTitle}
+                </div>
+              )}
+              {hasFooterSubtitle && (
+                <div
+                  style={{
+                    fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+                    lineHeight: 1.25,
+                    marginTop: hasFooterTitle
+                      ? `${Math.round(2 * scaleFactor)}px`
+                      : undefined,
+                    color: "rgba(255, 255, 255, 0.75)",
+                  }}
+                  className="font-medium"
+                >
+                  {state.posterFooterSubtitle}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showWebQr && (
+        <div
+          style={{
+            right: "4.5%",
+            bottom: "4.5%",
+            width: `${qrSize}px`,
+            height: `${qrSize}px`,
+          }}
+          className="absolute z-20 rounded-2xl bg-white/95 p-1.5 shadow-lg ring-1 ring-black/10"
+        >
+          <QrCodeSvg
+            value={targetUrl}
+            className="size-full rounded-none bg-transparent p-0 shadow-none ring-0"
+          />
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function WebMockupCard({
   state,
   logicalWidth,
   logicalHeight,
   isFetching = false,
+  previewGeneration = 0,
 }: {
   state: StudioState
   logicalWidth: number
   logicalHeight: number
   isFetching?: boolean
+  previewGeneration?: number
 }) {
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
   const [failedUrls, setFailedUrls] = React.useState<string[]>([])
@@ -30,6 +630,12 @@ export function WebMockupCard({
   const viewportRef = React.useRef<HTMLDivElement>(null)
   const [viewportSize, setViewportSize] = React.useState({ width: 440, height: 320 })
   const displayUrl = formatDisplayUrl(state.url)
+  const { activeFavicon, markFaviconFailed } = useFaviconSelection(
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+    state.metadata?.fetchedAt,
+    previewGeneration
+  )
 
   React.useEffect(() => {
     const el = viewportRef.current
@@ -43,7 +649,7 @@ export function WebMockupCard({
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [state.webLayout])
 
   const liveIframeUrl = React.useMemo(() => {
     const check = validatePublicUrl(state.url)
@@ -86,6 +692,7 @@ export function WebMockupCard({
   const isDarkChrome = state.chromeTheme === "dark"
   const isGlassChrome = state.chromeTheme === "glass"
   const isDefaultLerhem = displayUrl.toLowerCase().includes("lerhem.space")
+  const accentColor = resolveTabAccentColor(state)
 
   const shadowAlpha = 0.14 + (state.frameShadow / 100) * 0.44
   const shadowBlur = Math.round(44 * scaleFactor * (state.frameShadow / 100))
@@ -98,17 +705,31 @@ export function WebMockupCard({
           ? `0 ${shadowY}px ${shadowBlur}px rgba(9, 9, 14, ${shadowAlpha})`
           : "none",
     }
+    const offX = state.frameOffsetX ?? 0
+    const offY = state.frameOffsetY ?? 0
 
-    if (state.webLayout === "offset") {
-      const leftPct = 11 + (1 - userScale) * 24
-      const topPct = 26.5 + (1 - userScale) * 20
+    if (state.webLayout === "tab") {
       return {
         ...base,
         position: "absolute",
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        width: `${100 - leftPct + 2}%`,
-        height: `${100 - topPct + 2}%`,
+        left: `${50 + offX}%`,
+        top: `${56 + offY}%`,
+        transform: `translate(-50%, -50%) scale(${userScale})`,
+        width: "88%",
+        borderRadius: `${Math.round(20 * scaleFactor)}px`,
+      }
+    }
+
+    if (state.webLayout === "offset") {
+      const baseLeftPct = 11 + (1 - userScale) * 24
+      const baseTopPct = 26.5 + (1 - userScale) * 20
+      return {
+        ...base,
+        position: "absolute",
+        left: `${baseLeftPct + offX}%`,
+        top: `${baseTopPct + offY}%`,
+        width: `${100 - baseLeftPct + 2}%`,
+        height: `${100 - baseTopPct + 2}%`,
         borderTopLeftRadius: `${Math.round(22 * scaleFactor)}px`,
       }
     }
@@ -117,8 +738,8 @@ export function WebMockupCard({
       return {
         ...base,
         position: "absolute",
-        left: "50%",
-        top: "50%",
+        left: `${50 + offX}%`,
+        top: `${50 + offY}%`,
         transform: `translate(-50%, -50%) scale(${userScale})`,
         width: "84%",
         height: "74%",
@@ -130,8 +751,8 @@ export function WebMockupCard({
       return {
         ...base,
         position: "absolute",
-        left: "50%",
-        bottom: 0,
+        left: `${50 + offX}%`,
+        bottom: `${-offY}%`,
         transform: `translateX(-50%) scale(${userScale})`,
         transformOrigin: "bottom center",
         width: "86%",
@@ -145,8 +766,8 @@ export function WebMockupCard({
     return {
       ...base,
       position: "absolute",
-      left: "50%",
-      top: "50%",
+      left: `${50 + offX}%`,
+      top: `${50 + offY}%`,
       transform: `translate(-50%, -50%) scale(${userScale * 0.92})`,
       width: "80%",
       height: "70%",
@@ -155,6 +776,8 @@ export function WebMockupCard({
   }, [
     state.webLayout,
     state.frameShadow,
+    state.frameOffsetX,
+    state.frameOffsetY,
     userScale,
     scaleFactor,
     shadowAlpha,
@@ -166,12 +789,13 @@ export function WebMockupCard({
     if (state.browserChrome === "none") return null
 
     if (state.browserChrome === "chrome") {
+      const tabH = Math.round(28 * scaleFactor)
       return (
         <div className="shrink-0 select-none">
           {/* Top dark window bar with curved active tab */}
           <div
             className={cn(
-              "relative flex items-end px-4 pt-2",
+              "relative flex items-end px-4",
               isDarkChrome
                 ? "bg-[#0d0d10]"
                 : isGlassChrome
@@ -180,14 +804,18 @@ export function WebMockupCard({
             )}
             style={{ height: `${Math.round(36 * scaleFactor)}px` }}
           >
-            <div className="mb-2.5 flex items-center gap-1.5">
+            <div
+              style={{ height: `${tabH}px` }}
+              className="flex shrink-0 items-center gap-1.5"
+            >
               <span className="size-2.5 rounded-full bg-zinc-700" />
               <span className="size-2.5 rounded-full bg-zinc-700" />
               <span className="size-2.5 rounded-full bg-zinc-700" />
             </div>
             <div
+              style={{ height: `${tabH}px` }}
               className={cn(
-                "relative ml-4 flex h-[80%] min-w-[36%] max-w-[52%] items-center rounded-t-[10px] px-3.5",
+                "relative ml-4 flex min-w-[36%] max-w-[56%] items-center gap-1.5 rounded-t-[10px] pr-2 pl-3",
                 isDarkChrome
                   ? "bg-[#18181b] text-zinc-200"
                   : isGlassChrome
@@ -195,16 +823,48 @@ export function WebMockupCard({
                     : "bg-white text-zinc-900"
               )}
             >
-              {state.metadata?.faviconUrl ? (
+              {activeFavicon ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={state.metadata.faviconUrl}
+                  key={`${previewGeneration}-${activeFavicon}`}
+                  src={activeFavicon}
                   alt=""
-                  className="mr-1.5 size-3 rounded-xs object-contain"
+                  onError={() => markFaviconFailed(activeFavicon)}
+                  className="size-3 shrink-0 rounded-xs object-contain"
                 />
-              ) : null}
-              <span className="truncate text-[10px] font-medium opacity-75">
-                {state.metadata?.siteName || (isDefaultLerhem ? "Lerhem" : displayUrl)}
+              ) : (
+                <BrandMarkSvg
+                  accentColor={accentColor}
+                  className="size-3 shrink-0"
+                />
+              )}
+              <span className="truncate text-[10px] font-medium opacity-85">
+                {state.tabTitle.trim() ||
+                  state.metadata?.siteName ||
+                  (isDefaultLerhem ? "Lerhem" : displayUrl)}
+              </span>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "ml-auto flex size-4 shrink-0 items-center justify-center rounded-full",
+                  isDarkChrome
+                    ? "bg-white/10 text-zinc-300"
+                    : "bg-black/6 text-zinc-600"
+                )}
+              >
+                <IconX className="size-2.5" stroke={2.4} />
+              </span>
+            </div>
+
+            <div
+              style={{ height: `${tabH}px` }}
+              className="ml-2 flex shrink-0 items-center"
+            >
+              <span
+                aria-hidden="true"
+                className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/85"
+              >
+                <IconPlus className="size-3" stroke={2.2} />
               </span>
             </div>
           </div>
@@ -221,21 +881,36 @@ export function WebMockupCard({
             )}
             style={{ height: `${Math.round(44 * scaleFactor)}px` }}
           >
-            <div className="flex shrink-0 items-center gap-2">
-              <IconChevronLeft className="size-4" stroke={1.8} />
-              <IconChevronRight className="size-4 opacity-30" stroke={1.8} />
-              <IconRefresh className="size-3.5" stroke={1.9} />
-              <IconHome className="size-3.5" stroke={1.9} />
-            </div>
+            {state.showNavButtons && (
+              <div className="flex shrink-0 items-center gap-2">
+                <IconChevronLeft className="size-4" stroke={1.8} />
+                <IconChevronRight className="size-4 opacity-30" stroke={1.8} />
+                <IconRefresh className="size-3.5" stroke={1.9} />
+                <IconHome className="size-3.5" stroke={1.9} />
+              </div>
+            )}
 
             <div
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1",
-                isDarkChrome ? "bg-zinc-800 text-zinc-100" : "bg-[#18181b] text-zinc-100"
+                isDarkChrome
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "bg-zinc-100 text-zinc-800 ring-1 ring-black/5"
               )}
             >
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-white/12">
-                <IconLock className="size-3 text-zinc-200" stroke={2} />
+              <span
+                className={cn(
+                  "flex size-5 shrink-0 items-center justify-center rounded-md",
+                  isDarkChrome ? "bg-white/12" : "bg-black/5"
+                )}
+              >
+                <IconLock
+                  className={cn(
+                    "size-3",
+                    isDarkChrome ? "text-zinc-200" : "text-zinc-600"
+                  )}
+                  stroke={2}
+                />
               </span>
               <span className="truncate text-xs font-medium tracking-tight">
                 {displayUrl}
@@ -282,6 +957,48 @@ export function WebMockupCard({
       )
     }
 
+    if (state.browserChrome === "mobile") {
+      return (
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-2.5 border-b px-3 select-none",
+            isDarkChrome
+              ? "border-zinc-800 bg-[#18181b] text-zinc-100"
+              : isGlassChrome
+                ? "border-black/5 bg-white/92 text-zinc-900 backdrop-blur-md"
+                : "border-zinc-200/80 bg-white text-zinc-900"
+          )}
+          style={{ height: `${Math.round(46 * scaleFactor)}px` }}
+        >
+          {state.showNavButtons && (
+            <IconHome className="size-4 shrink-0 opacity-85" stroke={1.9} />
+          )}
+
+          <div
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2 rounded-full px-3 py-1.5",
+              isDarkChrome
+                ? "bg-zinc-800 text-zinc-100"
+                : "bg-zinc-100 text-zinc-900 ring-1 ring-black/5"
+            )}
+          >
+            <MobileTuneIconSvg className="size-3.5 shrink-0 opacity-75" />
+            <span className="truncate text-xs font-medium tracking-tight">
+              {displayUrl}
+            </span>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2.5">
+            <IconPlus className="size-4 opacity-85" stroke={2} />
+            <span className="flex size-4 items-center justify-center rounded-[4px] border-[1.5px] border-current text-[9px] leading-none font-bold opacity-85">
+              1
+            </span>
+            <IconDotsVertical className="size-4 opacity-85" stroke={2} />
+          </div>
+        </div>
+      )
+    }
+
     // minimal
     return (
       <div
@@ -300,11 +1017,387 @@ export function WebMockupCard({
     )
   }
 
+  if (state.webLayout === "tab") {
+    if (state.browserChrome === "mobile") {
+      const barH = Math.round(64 * scaleFactor)
+      const pillH = Math.round(40 * scaleFactor)
+      const barBg = isDarkChrome
+        ? "#18181B"
+        : isGlassChrome
+          ? "rgba(255, 255, 255, 0.95)"
+          : "#FFFFFF"
+      const pillBg = isDarkChrome ? "#27272A" : "#F4F4F5"
+      const fgColor = isDarkChrome ? "#F4F4F5" : "#18181B"
+
+      return (
+        <div
+          style={{
+            ...frameBoxStyle,
+            height: `${barH}px`,
+            backgroundColor: barBg,
+            color: fgColor,
+            paddingLeft: `${Math.round(16 * scaleFactor)}px`,
+            paddingRight: `${Math.round(16 * scaleFactor)}px`,
+            gap: `${Math.round(12 * scaleFactor)}px`,
+          }}
+          className={cn(
+            "relative z-10 flex items-center overflow-hidden ring-1 ring-black/10 select-none",
+            isGlassChrome && "backdrop-blur-xl"
+          )}
+        >
+          {state.showNavButtons && (
+            <IconHome
+              style={{
+                width: `${Math.round(20 * scaleFactor)}px`,
+                height: `${Math.round(20 * scaleFactor)}px`,
+              }}
+              className="shrink-0 opacity-85"
+              stroke={1.9}
+            />
+          )}
+
+          <div
+            style={{
+              height: `${pillH}px`,
+              backgroundColor: pillBg,
+              paddingLeft: `${Math.round(14 * scaleFactor)}px`,
+              paddingRight: `${Math.round(14 * scaleFactor)}px`,
+              gap: `${Math.round(9 * scaleFactor)}px`,
+            }}
+            className={cn(
+              "flex min-w-0 flex-1 items-center rounded-full",
+              !isDarkChrome && "ring-1 ring-black/5"
+            )}
+          >
+            <MobileTuneIconSvg
+              style={{
+                width: `${Math.round(16 * scaleFactor)}px`,
+                height: `${Math.round(16 * scaleFactor)}px`,
+              }}
+              className="shrink-0 opacity-75"
+            />
+            <span
+              style={{
+                fontSize: `${Math.round(15 * scaleFactor)}px`,
+                letterSpacing: "-0.01em",
+              }}
+              className="min-w-0 flex-1 truncate font-medium"
+            >
+              {displayUrl}
+            </span>
+          </div>
+
+          <div
+            style={{ gap: `${Math.round(12 * scaleFactor)}px` }}
+            className="flex shrink-0 items-center"
+          >
+            <IconPlus
+              style={{
+                width: `${Math.round(20 * scaleFactor)}px`,
+                height: `${Math.round(20 * scaleFactor)}px`,
+              }}
+              className="opacity-85"
+              stroke={2}
+            />
+            <span
+              style={{
+                width: `${Math.round(19 * scaleFactor)}px`,
+                height: `${Math.round(19 * scaleFactor)}px`,
+                fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+              }}
+              className="flex items-center justify-center rounded-[5px] border-[1.75px] border-current leading-none font-bold opacity-85"
+            >
+              1
+            </span>
+            <IconDotsVertical
+              style={{
+                width: `${Math.round(19 * scaleFactor)}px`,
+                height: `${Math.round(19 * scaleFactor)}px`,
+              }}
+              className="opacity-85"
+              stroke={2}
+            />
+          </div>
+        </div>
+      )
+    }
+
+    const tabBarH = Math.round(46 * scaleFactor)
+    const navBarH = Math.round(58 * scaleFactor)
+    const tabHeight = Math.round(38 * scaleFactor)
+    const tabRadius = Math.round(12 * scaleFactor)
+    const filletSize = Math.round(8 * scaleFactor)
+    const dotSize = Math.round(10 * scaleFactor)
+    const dotGap = Math.round(6 * scaleFactor)
+    const iconSize = Math.round(18 * scaleFactor)
+    const closeBtnSize = Math.round(18 * scaleFactor)
+    const plusBtnSize = Math.round(22 * scaleFactor)
+    const navIconSize = Math.round(16 * scaleFactor)
+    const pillHeight = Math.round(38 * scaleFactor)
+    const pillRadius = Math.round(12 * scaleFactor)
+    const lockSize = Math.round(14 * scaleFactor)
+
+    const stripBg = isDarkChrome
+      ? "#0D0D10"
+      : isGlassChrome
+        ? "rgba(20, 20, 24, 0.84)"
+        : "#141418"
+    const tabBg = isDarkChrome
+      ? "#18181B"
+      : isGlassChrome
+        ? "rgba(255, 255, 255, 0.95)"
+        : "#FFFFFF"
+    const tabTitleText =
+      state.tabTitle.trim() ||
+      state.metadata?.siteName ||
+      (isDefaultLerhem ? "Lerhem Studio" : displayUrl)
+    const urlPillBg = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)
+    const urlPillBorder = hexToTintRgba(accentColor, isDarkChrome ? 0.28 : 0.18)
+    const urlFgColor = resolveTabUrlForeground(
+      accentColor,
+      isDarkChrome,
+      isGlassChrome
+    )
+    const navIconColor = isDarkChrome ? "#E4E4E7" : "#18181B"
+
+    return (
+      <div
+        style={frameBoxStyle}
+        className={cn(
+          "relative z-10 flex flex-col overflow-hidden ring-1 ring-black/10 select-none",
+          isGlassChrome && "backdrop-blur-xl"
+        )}
+      >
+        {/* Top Tab Strip */}
+        <div
+          style={{
+            height: `${tabBarH}px`,
+            backgroundColor: stripBg,
+            paddingLeft: `${Math.round(16 * scaleFactor)}px`,
+            paddingRight: `${Math.round(16 * scaleFactor)}px`,
+          }}
+          className="relative flex shrink-0 items-end"
+        >
+          {/* 3 window dots */}
+          <div
+            style={{ height: `${tabHeight}px`, gap: `${dotGap}px` }}
+            className="flex shrink-0 items-center"
+          >
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                style={{
+                  width: `${dotSize}px`,
+                  height: `${dotSize}px`,
+                  backgroundColor: "#52525B",
+                }}
+                className="rounded-full"
+              />
+            ))}
+          </div>
+
+          {/* Active Tab with concave bottom fillets */}
+          <div
+            style={{
+              marginLeft: `${Math.round(14 * scaleFactor)}px`,
+              height: `${tabHeight}px`,
+              backgroundColor: tabBg,
+              borderTopLeftRadius: `${tabRadius}px`,
+              borderTopRightRadius: `${tabRadius}px`,
+              paddingLeft: `${Math.round(12 * scaleFactor)}px`,
+              paddingRight: `${Math.round(12 * scaleFactor)}px`,
+              gap: `${Math.round(8 * scaleFactor)}px`,
+            }}
+            className="relative flex min-w-0 items-center"
+          >
+            {/* Bottom-left concave fillet */}
+            <svg
+              viewBox="0 0 16 16"
+              style={{
+                left: `-${filletSize}px`,
+                width: `${filletSize}px`,
+                height: `${filletSize}px`,
+              }}
+              className="pointer-events-none absolute bottom-0 block"
+              aria-hidden="true"
+            >
+              <path d="M 16 0 L 16 16 L 0 16 A 16 16 0 0 0 16 0 Z" fill={tabBg} />
+            </svg>
+
+            {/* Bottom-right concave fillet */}
+            <svg
+              viewBox="0 0 16 16"
+              style={{
+                right: `-${filletSize}px`,
+                width: `${filletSize}px`,
+                height: `${filletSize}px`,
+              }}
+              className="pointer-events-none absolute bottom-0 block"
+              aria-hidden="true"
+            >
+              <path d="M 0 0 L 0 16 L 16 16 A 16 16 0 0 1 0 0 Z" fill={tabBg} />
+            </svg>
+
+            {activeFavicon ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={`${previewGeneration}-${activeFavicon}`}
+                src={activeFavicon}
+                alt=""
+                onError={() => markFaviconFailed(activeFavicon)}
+                style={{ width: `${iconSize}px`, height: `${iconSize}px` }}
+                className="shrink-0 rounded-sm object-contain"
+              />
+            ) : (
+              <BrandMarkSvg
+                accentColor={accentColor}
+                style={{ width: `${iconSize}px`, height: `${iconSize}px` }}
+                className="shrink-0"
+              />
+            )}
+
+            <span
+              style={{
+                fontSize: `${Math.round(13 * scaleFactor)}px`,
+                color: isDarkChrome ? "#F4F4F5" : "#18181B",
+                maxWidth: `${Math.round(180 * scaleFactor)}px`,
+              }}
+              className="truncate font-semibold tracking-tight"
+            >
+              {tabTitleText}
+            </span>
+
+            <span
+              aria-hidden="true"
+              style={{
+                width: `${closeBtnSize}px`,
+                height: `${closeBtnSize}px`,
+                backgroundColor: isDarkChrome
+                  ? "rgba(255, 255, 255, 0.1)"
+                  : "rgba(0, 0, 0, 0.06)",
+                color: isDarkChrome ? "#E4E4E7" : "#27272A",
+              }}
+              className="flex shrink-0 items-center justify-center rounded-full"
+            >
+              <IconX
+                style={{
+                  width: `${Math.round(11 * scaleFactor)}px`,
+                  height: `${Math.round(11 * scaleFactor)}px`,
+                }}
+                stroke={2.4}
+              />
+            </span>
+          </div>
+
+          {/* New tab + button */}
+          <div
+            style={{
+              height: `${tabHeight}px`,
+              marginLeft: `${Math.round(10 * scaleFactor)}px`,
+            }}
+            className="flex shrink-0 items-center"
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: `${plusBtnSize}px`,
+                height: `${plusBtnSize}px`,
+                backgroundColor: "rgba(255, 255, 255, 0.12)",
+                color: "rgba(255, 255, 255, 0.9)",
+              }}
+              className="flex shrink-0 items-center justify-center rounded-full"
+            >
+              <IconPlus
+                style={{
+                  width: `${Math.round(13 * scaleFactor)}px`,
+                  height: `${Math.round(13 * scaleFactor)}px`,
+                }}
+                stroke={2.2}
+              />
+            </span>
+          </div>
+        </div>
+
+        {/* Bottom Address Bar */}
+        <div
+          style={{
+            height: `${navBarH}px`,
+            backgroundColor: tabBg,
+            paddingLeft: `${Math.round(14 * scaleFactor)}px`,
+            paddingRight: `${Math.round(14 * scaleFactor)}px`,
+            gap: `${Math.round(10 * scaleFactor)}px`,
+          }}
+          className="flex shrink-0 items-center"
+        >
+          {state.showNavButtons && (
+            <div
+              style={{
+                gap: `${Math.round(6 * scaleFactor)}px`,
+                color: navIconColor,
+              }}
+              className="flex shrink-0 items-center"
+            >
+              <IconChevronLeft
+                style={{ width: `${navIconSize}px`, height: `${navIconSize}px` }}
+                className="opacity-75"
+                stroke={2}
+              />
+              <IconChevronRight
+                style={{ width: `${navIconSize}px`, height: `${navIconSize}px` }}
+                className="opacity-30"
+                stroke={2}
+              />
+            </div>
+          )}
+
+          {/* Full-width Address / URL Pill */}
+          <div
+            style={{
+              height: `${pillHeight}px`,
+              backgroundColor: urlPillBg,
+              border: `1px solid ${urlPillBorder}`,
+              borderRadius: `${pillRadius}px`,
+              paddingLeft: `${Math.round(12 * scaleFactor)}px`,
+              paddingRight: `${Math.round(12 * scaleFactor)}px`,
+              gap: `${Math.round(8 * scaleFactor)}px`,
+            }}
+            className="flex min-w-0 flex-1 items-center"
+          >
+            <SolidPadlockSvg
+              color={urlFgColor}
+              style={{ width: `${lockSize}px`, height: `${lockSize}px` }}
+            />
+            <span
+              style={{
+                fontSize: `${Math.round(14.5 * scaleFactor)}px`,
+                color: urlFgColor,
+                letterSpacing: "-0.01em",
+              }}
+              className="min-w-0 flex-1 truncate font-medium"
+            >
+              {displayUrl}
+            </span>
+            <IconArrowUpRight
+              style={{
+                width: `${Math.round(14 * scaleFactor)}px`,
+                height: `${Math.round(14 * scaleFactor)}px`,
+                color: urlFgColor,
+                opacity: 0.7,
+              }}
+              className="shrink-0"
+              stroke={2.1}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       style={frameBoxStyle}
       className={cn(
-        "flex flex-col overflow-hidden ring-1 ring-black/15",
+        "relative z-10 flex flex-col overflow-hidden ring-1 ring-black/15",
         isDarkChrome ? "bg-[#09090b] text-zinc-50" : "bg-white text-zinc-950"
       )}
     >
@@ -320,11 +1413,13 @@ export function WebMockupCard({
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {state.metadata?.faviconUrl ? (
+              {activeFavicon ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={state.metadata.faviconUrl}
+                  key={`${previewGeneration}-${activeFavicon}`}
+                  src={activeFavicon}
                   alt=""
+                  onError={() => markFaviconFailed(activeFavicon)}
                   className="size-4 rounded-xs object-contain"
                 />
               ) : (

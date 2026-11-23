@@ -25,12 +25,18 @@ import {
   downloadStudioImage,
 } from "@/lib/export-canvas"
 import { resolveAspectDimensions } from "@/lib/presets"
+import { getQrByteLength, QR_MAX_BYTE_LENGTH } from "@/lib/qr"
 import type {
   ExportFormat,
   ExportScale,
   StudioState,
 } from "@/lib/studio-types"
-import { encodeShareState, formatDisplayUrl } from "@/lib/url-utils"
+import {
+  encodeShareState,
+  formatDisplayUrl,
+  normalizeUrl,
+  SHARE_STATE_MAX_LENGTH,
+} from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
 
 export function ExportDialog({
@@ -51,6 +57,11 @@ export function ExportDialog({
   const [copiedLink, setCopiedLink] = React.useState(false)
 
   const { width, height } = resolveAspectDimensions(state)
+  const qrEnabled = state.mode === "web" ? state.webShowQr : state.socialShowQr
+  const qrByteLength = getQrByteLength(
+    normalizeUrl(state.url) || "https://www.lerhem.space"
+  )
+  const qrExceedsCapacity = qrEnabled && qrByteLength > QR_MAX_BYTE_LENGTH
   const suggestedName = React.useMemo(() => {
     const clean = formatDisplayUrl(state.url)
       .replace(/[^a-z0-9.-]+/gi, "-")
@@ -90,11 +101,21 @@ export function ExportDialog({
 
   const handleCopyShareLink = async () => {
     const encoded = encodeShareState(state)
-    const shareUrl = `${window.location.origin}/share?d=${encoded}`
-    await navigator.clipboard.writeText(shareUrl)
-    setCopiedLink(true)
-    onNotify("Copied shareable PrettyLink page URL")
-    setTimeout(() => setCopiedLink(false), 1800)
+    if (encoded.length > SHARE_STATE_MAX_LENGTH) {
+      onNotify(
+        "Share link is too large. Shorten text or remove long custom URLs to share."
+      )
+      return
+    }
+    try {
+      const shareUrl = `${window.location.origin}/share?d=${encoded}`
+      await navigator.clipboard.writeText(shareUrl)
+      setCopiedLink(true)
+      onNotify("Copied shareable PrettyLink page URL")
+      setTimeout(() => setCopiedLink(false), 1800)
+    } catch {
+      onNotify("Could not copy share link to clipboard")
+    }
   }
 
   return (
@@ -164,9 +185,24 @@ export function ExportDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="export-filename" className="text-xs text-muted-foreground">
-              Filename
-            </Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="export-filename" className="text-xs text-muted-foreground">
+                Filename
+              </Label>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date()
+                  const pad = (n: number) => String(n).padStart(2, "0")
+                  const d = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+                  const t = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+                  setFilename(`Screenshot_${d}_${t}_Chrome`)
+                }}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                Use Screenshot_…_Chrome name
+              </button>
+            </div>
             <Input
               id="export-filename"
               value={filename}
@@ -175,6 +211,15 @@ export function ExportDialog({
               className="h-9 font-mono text-xs"
             />
           </div>
+
+          {qrExceedsCapacity && (
+            <p
+              role="alert"
+              className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              URL is {qrByteLength} bytes (max {QR_MAX_BYTE_LENGTH} bytes for QR codes). Shorten the URL or disable the QR overlay to export.
+            </p>
+          )}
         </div>
 
         <DialogFooter className="flex-col gap-2 sm:flex-col">

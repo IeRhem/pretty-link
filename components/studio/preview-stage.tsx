@@ -3,11 +3,15 @@
 import * as React from "react"
 import {
   IconCheck,
+  IconChevronDown,
   IconDice5,
+  IconDownload,
+  IconLayoutSidebarLeftExpand,
   IconLink,
   IconMoon,
   IconRestore,
   IconShare2,
+  IconSparkles,
   IconSun,
   IconZoomIn,
   IconZoomOut,
@@ -15,6 +19,15 @@ import {
 import { MockupFrame } from "@/components/studio/mockup-frame"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroupLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuRadioItemIndicator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Tooltip,
   TooltipContent,
@@ -29,6 +42,11 @@ export function PreviewStage({
   state,
   isFetching,
   previewGeneration = 0,
+  drawerId,
+  mobileMenuOpen = false,
+  onOpenMobileMenu,
+  menuTriggerRef,
+  onOpenExport,
   onToggleTheme,
   onRandomize,
   onReset,
@@ -39,6 +57,11 @@ export function PreviewStage({
   state: StudioState
   isFetching: boolean
   previewGeneration?: number
+  drawerId?: string
+  mobileMenuOpen?: boolean
+  onOpenMobileMenu?: () => void
+  menuTriggerRef?: React.RefObject<HTMLButtonElement | null>
+  onOpenExport?: () => void
   onToggleTheme: () => void
   onRandomize: () => void
   onReset: () => void
@@ -50,6 +73,17 @@ export function PreviewStage({
   const [dragging, setDragging] = React.useState(false)
   const [sharedCopied, setSharedCopied] = React.useState(false)
   const { width, height } = resolveAspectDimensions(state)
+
+  const isTemplateActive = (tpl: (typeof QUICK_TEMPLATES)[number]) =>
+    state.mode === tpl.mode &&
+    state.url === tpl.patch.url &&
+    state.aspectRatioId === tpl.patch.aspectRatioId &&
+    (!tpl.patch.webLayout || state.webLayout === tpl.patch.webLayout) &&
+    (!tpl.patch.browserChrome || state.browserChrome === tpl.patch.browserChrome) &&
+    (!tpl.patch.socialCardStyle ||
+      state.socialCardStyle === tpl.patch.socialCardStyle)
+
+  const activeTemplate = QUICK_TEMPLATES.find(isTemplateActive) ?? null
 
   const handleShareClick = () => {
     onShareLink()
@@ -79,7 +113,7 @@ export function PreviewStage({
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className="bg-studio-grid relative flex min-h-[520px] flex-1 flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-background/40 p-3 sm:p-5"
+      className="@container/stage bg-studio-grid relative flex min-h-[340px] flex-1 flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-background/40 p-2.5 sm:p-4 lg:p-5"
     >
       {/* Drop target overlay */}
       {dragging && (
@@ -92,10 +126,30 @@ export function PreviewStage({
 
       {/* Top Studio Header Bar */}
       <header className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 py-1.5 shadow-2xs backdrop-blur-md">
+        <div className="flex min-w-0 items-center gap-2">
+          {onOpenMobileMenu && (
+            <Button
+              ref={menuTriggerRef}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onOpenMobileMenu}
+              aria-label="Open studio controls sidebar"
+              aria-expanded={mobileMenuOpen}
+              aria-controls={drawerId}
+              className="h-9 gap-1.5 rounded-xl border-border/80 bg-card/90 px-2.5 text-xs font-medium shadow-2xs backdrop-blur-md lg:hidden [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+            >
+              <IconLayoutSidebarLeftExpand
+                className="size-4 shrink-0"
+                aria-hidden="true"
+              />
+              <span className="hidden sm:inline">Controls</span>
+            </Button>
+          )}
+
+          <div className="flex shrink-0 items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-2.5 py-1.5 shadow-2xs backdrop-blur-md sm:px-3">
             <span className="flex size-6 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-2xs">
-              <IconLink className="size-3.5" stroke={2.2} />
+              <IconLink className="size-3.5" stroke={2.2} aria-hidden="true" />
             </span>
             <span className="font-heading text-sm font-semibold tracking-tight">
               PrettyLink
@@ -104,13 +158,13 @@ export function PreviewStage({
 
           <Badge
             variant="outline"
-            className="hidden bg-card/80 font-mono text-[11px] text-muted-foreground sm:inline-flex"
+            className="hidden max-w-[220px] truncate bg-card/80 font-mono text-[11px] text-muted-foreground md:inline-flex xl:max-w-[300px]"
           >
             {formatDisplayUrl(state.url)} · {width}×{height}
           </Badge>
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-card/90 p-1 shadow-2xs backdrop-blur-md">
+        <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-card/90 p-1 shadow-2xs backdrop-blur-md">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -119,11 +173,12 @@ export function PreviewStage({
                   variant="ghost"
                   size="sm"
                   onClick={onRandomize}
-                  className="h-8 gap-1.5 px-2.5 text-xs"
+                  aria-label="Randomize gradient and frame style"
+                  className="h-8 gap-1.5 px-2.5 text-xs [@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:min-w-10"
                 />
               }
             >
-              <IconDice5 className="size-4" />
+              <IconDice5 className="size-4" aria-hidden="true" />
               <span className="hidden sm:inline">Randomize</span>
             </TooltipTrigger>
             <TooltipContent>Randomize gradient & frame style</TooltipContent>
@@ -138,17 +193,18 @@ export function PreviewStage({
                   size="icon-sm"
                   onClick={onReset}
                   aria-label="Reset studio"
+                  className="[@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:min-w-10"
                 />
               }
             >
-              <IconRestore className="size-4" />
+              <IconRestore className="size-4" aria-hidden="true" />
             </TooltipTrigger>
             <TooltipContent>Reset to default preset</TooltipContent>
           </Tooltip>
 
-          <div className="mx-0.5 hidden h-4 w-px bg-border sm:block" />
+          <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
 
-          <div className="hidden items-center gap-0.5 sm:flex">
+          <div className="hidden items-center gap-0.5 md:flex">
             <Button
               type="button"
               variant="ghost"
@@ -156,7 +212,7 @@ export function PreviewStage({
               onClick={() => setZoom((z) => Math.max(0.65, Number((z - 0.1).toFixed(2))))}
               aria-label="Zoom out"
             >
-              <IconZoomOut className="size-4" />
+              <IconZoomOut className="size-4" aria-hidden="true" />
             </Button>
             <button
               type="button"
@@ -173,7 +229,7 @@ export function PreviewStage({
               onClick={() => setZoom((z) => Math.min(1.25, Number((z + 0.1).toFixed(2))))}
               aria-label="Zoom in"
             >
-              <IconZoomIn className="size-4" />
+              <IconZoomIn className="size-4" aria-hidden="true" />
             </Button>
           </div>
 
@@ -187,14 +243,15 @@ export function PreviewStage({
                   variant="ghost"
                   size="sm"
                   onClick={handleShareClick}
-                  className="h-8 gap-1.5 px-2.5 text-xs"
+                  aria-label={sharedCopied ? "Share link copied" : "Copy shareable link"}
+                  className="h-8 gap-1.5 px-2.5 text-xs [@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:min-w-10"
                 />
               }
             >
               {sharedCopied ? (
-                <IconCheck className="size-4 text-primary" />
+                <IconCheck className="size-4 text-primary" aria-hidden="true" />
               ) : (
-                <IconShare2 className="size-4" />
+                <IconShare2 className="size-4" aria-hidden="true" />
               )}
               <span className="hidden sm:inline">
                 {sharedCopied ? "Copied" : "Share"}
@@ -212,11 +269,12 @@ export function PreviewStage({
                   size="icon-sm"
                   onClick={onToggleTheme}
                   aria-label="Toggle studio theme"
+                  className="[@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:min-w-10"
                 />
               }
             >
-              <IconSun className="hidden size-4 dark:block" />
-              <IconMoon className="block size-4 dark:hidden" />
+              <IconSun className="hidden size-4 dark:block" aria-hidden="true" />
+              <IconMoon className="block size-4 dark:hidden" aria-hidden="true" />
             </TooltipTrigger>
             <TooltipContent>
               Toggle light / dark theme
@@ -226,7 +284,7 @@ export function PreviewStage({
       </header>
 
       {/* Center Stage Artwork */}
-      <div className="relative my-3 flex min-h-0 flex-1 items-center justify-center p-2 sm:p-6">
+      <div className="relative my-2 flex min-h-0 flex-1 items-center justify-center p-1 sm:my-3 sm:p-4 lg:p-6">
         <MockupFrame
           state={state}
           isFetching={isFetching}
@@ -237,24 +295,86 @@ export function PreviewStage({
         />
       </div>
 
-      {/* Bottom Quick-Template Strip */}
-      <footer className="flex flex-wrap items-center justify-center gap-1.5">
-        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-2xs backdrop-blur-md">
+      {/* Bottom Quick-Template Dropdown (smaller screens / compact stage) & Inline Strip (wide desktop) */}
+      <footer className="flex flex-wrap items-center justify-center gap-2">
+        <div className="flex max-w-full items-center justify-center gap-2 @4xl/stage:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="group inline-flex h-10 max-w-full min-w-0 items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md transition-colors hover:bg-muted/70 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-popup-open:bg-muted data-popup-open:ring-1 data-popup-open:ring-border [@media(pointer:coarse)]:min-h-11"
+            >
+              {activeTemplate ? (
+                <span
+                  style={{ backgroundImage: activeTemplate.swatch }}
+                  className="size-3 shrink-0 rounded-full ring-1 ring-white/20"
+                />
+              ) : (
+                <IconSparkles
+                  className="size-3.5 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              )}
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                Presets
+              </span>
+              <span className="min-w-0 truncate font-medium">
+                {activeTemplate ? activeTemplate.name : "Choose…"}
+              </span>
+              <IconChevronDown
+                className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-data-popup-open:rotate-180"
+                aria-hidden="true"
+              />
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent
+              side="top"
+              align="center"
+              sideOffset={8}
+              className="max-h-[min(22rem,calc(100dvh-6rem))] w-[min(17.5rem,calc(100dvw-2rem))] overflow-y-auto p-1.5"
+            >
+              <DropdownMenuRadioGroup value={activeTemplate?.id ?? ""}>
+                <DropdownMenuGroupLabel>Quick Presets</DropdownMenuGroupLabel>
+                {QUICK_TEMPLATES.map((tpl) => (
+                  <DropdownMenuRadioItem
+                    key={tpl.id}
+                    value={tpl.id}
+                    closeOnClick
+                    onClick={() => onApplyTemplate(tpl.patch)}
+                    className="min-h-9 [@media(pointer:coarse)]:min-h-11"
+                  >
+                    <span className="flex w-4 shrink-0 items-center justify-center text-primary">
+                      <DropdownMenuRadioItemIndicator>
+                        <IconCheck className="size-3.5" aria-hidden="true" />
+                      </DropdownMenuRadioItemIndicator>
+                    </span>
+                    <span
+                      style={{ backgroundImage: tpl.swatch }}
+                      className="size-3 shrink-0 rounded-full ring-1 ring-white/20"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{tpl.name}</span>
+                    <span className="ml-auto text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                      {tpl.mode}
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <div className="hidden max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-2xs backdrop-blur-md @4xl/stage:flex">
           <span className="px-2 text-[11px] font-medium whitespace-nowrap text-muted-foreground">
             Presets
           </span>
           {QUICK_TEMPLATES.map((tpl) => {
-            const isActive =
-              state.mode === tpl.mode &&
-              state.url === tpl.patch.url &&
-              state.aspectRatioId === tpl.patch.aspectRatioId
+            const isActive = isTemplateActive(tpl)
             return (
               <button
                 key={tpl.id}
                 type="button"
+                aria-pressed={isActive}
                 onClick={() => onApplyTemplate(tpl.patch)}
                 className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-xl px-2 py-1 text-[11px] font-medium whitespace-nowrap transition-colors",
                   isActive
                     ? "bg-muted text-foreground ring-1 ring-border"
                     : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -269,6 +389,18 @@ export function PreviewStage({
             )
           })}
         </div>
+
+        {onOpenExport && (
+          <Button
+            type="button"
+            variant="default"
+            onClick={onOpenExport}
+            className="h-10 gap-1.5 rounded-xl px-3.5 font-heading text-xs font-semibold shadow-sm lg:hidden [@media(pointer:coarse)]:min-h-11"
+          >
+            <IconDownload className="size-3.5" aria-hidden="true" />
+            Export
+          </Button>
+        )}
       </footer>
     </section>
   )
