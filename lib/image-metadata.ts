@@ -71,12 +71,10 @@ function buildXmpPacket(url: string, title?: string): string {
     '    <rdf:Description rdf:about=""',
     '      xmlns:dc="http://purl.org/dc/elements/1.1/"',
     '      xmlns:xmp="http://ns.adobe.com/xap/1.0/"',
-    '      xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"',
-    '      xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/">',
+    '      xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">',
     `      <dc:source>${safeUrl}</dc:source>`,
     `      <xmp:BaseURL>${safeUrl}</xmp:BaseURL>`,
     `      <photoshop:Source>${safeUrl}</photoshop:Source>`,
-    `      <Iptc4xmpCore:CiUrlWork>${safeUrl}</Iptc4xmpCore:CiUrlWork>`,
     "      <dc:relation>",
     "        <rdf:Bag>",
     `          <rdf:li>${safeUrl}</rdf:li>`,
@@ -103,7 +101,7 @@ function buildXmpPacket(url: string, title?: string): string {
   ].join("\n")
 }
 
-function concatUint8Arrays(parts: Uint8Array[]): Uint8Array {
+function concatUint8Arrays(parts: Uint8Array[]): ArrayBuffer {
   const total = parts.reduce((sum, p) => sum + p.length, 0)
   const out = new Uint8Array(total)
   let offset = 0
@@ -111,7 +109,7 @@ function concatUint8Arrays(parts: Uint8Array[]): Uint8Array {
     out.set(part, offset)
     offset += part.length
   }
-  return out
+  return out.buffer
 }
 
 function createPngITXtChunk(keyword: string, text: string): Uint8Array {
@@ -145,7 +143,7 @@ function injectPngMetadata(
   bytes: Uint8Array,
   url: string,
   title?: string
-): Uint8Array | null {
+): ArrayBuffer | null {
   if (bytes.length < 33) return null
   for (let i = 0; i < PNG_SIGNATURE.length; i++) {
     if (bytes[i] !== PNG_SIGNATURE[i]) return null
@@ -159,10 +157,37 @@ function injectPngMetadata(
     bytes[14]!,
     bytes[15]!
   )
-  if (ihdrType !== "IHDR") return null
+  if (ihdrType !== "IHDR" || ihdrLen !== 13) return null
 
   const insertAt = 8 + 4 + 4 + ihdrLen + 4
   if (insertAt > bytes.length) return null
+
+  let pos = insertAt
+  let sawIdat = false
+  let sawIend = false
+  while (pos + 12 <= bytes.length) {
+    const chunkLen = view.getUint32(pos, false)
+    if (chunkLen > 0x7fffffff || pos + 12 + chunkLen > bytes.length) {
+      return null
+    }
+    const chunkType = String.fromCharCode(
+      bytes[pos + 4]!,
+      bytes[pos + 5]!,
+      bytes[pos + 6]!,
+      bytes[pos + 7]!
+    )
+    pos += 12 + chunkLen
+    if (chunkType === "IDAT") {
+      sawIdat = true
+    } else if (chunkType === "IEND") {
+      if (chunkLen !== 0 || pos !== bytes.length) {
+        return null
+      }
+      sawIend = true
+      break
+    }
+  }
+  if (!sawIdat || !sawIend) return null
 
   const xmp = buildXmpPacket(url, title)
   const chunks = [
@@ -339,17 +364,41 @@ function injectJpegMetadata(
   url: string,
   title?: string,
   softwareName?: string | null
-): Uint8Array | null {
+): ArrayBuffer | null {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
     return null
   }
 
   let insertAt = 2
-  // Keep JFIF APP0 right after SOI when present
-  if (bytes.length >= 6 && bytes[2] === 0xff && bytes[3] === 0xe0) {
+  // Keep JFIF APP0 (and any contiguous JFXX APP0 extensions) right after SOI when present
+  if (bytes.length >= 4 && bytes[2] === 0xff && bytes[3] === 0xe0) {
+    if (bytes.length < 6) return null
     const app0Len = (bytes[4]! << 8) | bytes[5]!
-    if (app0Len >= 2 && 4 + app0Len <= bytes.length) {
-      insertAt = 4 + app0Len
+    if (app0Len < 2 || 4 + app0Len > bytes.length) {
+      return null
+    }
+    insertAt = 4 + app0Len
+
+    // Advance past any contiguous JFXX APP0 extension segments immediately following JFIF APP0
+    while (
+      insertAt + 2 <= bytes.length &&
+      bytes[insertAt] === 0xff &&
+      bytes[insertAt + 1] === 0xe0
+    ) {
+      if (insertAt + 4 > bytes.length) return null
+      const extLen = (bytes[insertAt + 2]! << 8) | bytes[insertAt + 3]!
+      if (extLen < 2 || insertAt + 2 + extLen > bytes.length) {
+        return null
+      }
+      const isJfxx =
+        extLen >= 7 &&
+        bytes[insertAt + 4] === 0x4a && // 'J'
+        bytes[insertAt + 5] === 0x46 && // 'F'
+        bytes[insertAt + 6] === 0x58 && // 'X'
+        bytes[insertAt + 7] === 0x58 && // 'X'
+        bytes[insertAt + 8] === 0x00
+      if (!isJfxx) break
+      insertAt += 2 + extLen
     }
   }
 
@@ -370,18 +419,22 @@ function injectJpegMetadata(
 export function sanitizeMetadataUrl(
   rawUrl: string,
   includeQueryAndHash = false
-): string {
+): string | null {
   const normalized = normalizeUrl(rawUrl) || "https://www.lerhem.space"
-  if (includeQueryAndHash) return normalized
   try {
     const parsed = new URL(normalized)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null
+    }
     parsed.username = ""
     parsed.password = ""
-    parsed.search = ""
-    parsed.hash = ""
+    if (!includeQueryAndHash) {
+      parsed.search = ""
+      parsed.hash = ""
+    }
     return parsed.toString()
   } catch {
-    return normalized.replace(/[?#].*$/, "") || "https://www.lerhem.space"
+    return null
   }
 }
 
@@ -400,6 +453,9 @@ export async function embedUrlMetadataInImageBlob(
     rawUrl,
     options?.includeFullUrl ?? false
   )
+  if (!metadataUrl) {
+    return blob
+  }
   const softwareName =
     options?.software === undefined ? "PrettyLink" : options.software
   try {
@@ -411,11 +467,7 @@ export async function embedUrlMetadataInImageBlob(
         : injectJpegMetadata(bytes, metadataUrl, title, softwareName)
 
     if (!patched) return blob
-    const outBuffer = patched.buffer.slice(
-      patched.byteOffset,
-      patched.byteOffset + patched.byteLength
-    ) as ArrayBuffer
-    return new Blob([outBuffer], { type: blob.type })
+    return new Blob([patched], { type: blob.type })
   } catch {
     return blob
   }

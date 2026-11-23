@@ -123,6 +123,9 @@ export function ControlSidebar({
     socialCoverUrl: 0,
   })
   const navIconsLabelId = React.useId()
+  const webQrLabelId = React.useId()
+  const capturedFromLabelId = React.useId()
+  const socialQrLabelId = React.useId()
   const cornerIconLabelId = React.useId()
   const headlineTextLabelId = React.useId()
   const footerSignatureLabelId = React.useId()
@@ -247,7 +250,11 @@ export function ControlSidebar({
             <AspectRatioPicker state={state} onChange={onChange} />
 
             {/* Background Controls */}
-            <BackgroundControls state={state} onChange={onChange} />
+            <BackgroundControls
+              state={state}
+              onChange={onChange}
+              getUploadResetToken={getUploadResetToken}
+            />
 
             {/* Border Radius Selector matching uploaded mockup */}
             <div className="space-y-2">
@@ -521,10 +528,14 @@ export function ControlSidebar({
 
                   <div className="space-y-1 px-0.5">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">
+                      <Label
+                        id={webQrLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
                         Scannable QR Badge
                       </Label>
                       <Switch
+                        aria-labelledby={webQrLabelId}
                         checked={state.webShowQr}
                         onCheckedChange={(checked) =>
                           onChange({ webShowQr: checked })
@@ -542,10 +553,14 @@ export function ControlSidebar({
                   </div>
 
                   <div className="flex items-center justify-between px-0.5">
-                    <Label className="text-xs text-muted-foreground">
+                    <Label
+                      id={capturedFromLabelId}
+                      className="text-xs text-muted-foreground"
+                    >
                       &ldquo;Captured from&rdquo; Badge
                     </Label>
                     <Switch
+                      aria-labelledby={capturedFromLabelId}
                       checked={state.showCapturedFrom}
                       onCheckedChange={(checked) =>
                         onChange({ showCapturedFrom: checked })
@@ -555,50 +570,56 @@ export function ControlSidebar({
 
                   {state.webLayout === "tab" ? (
                     <div className="space-y-2.5 rounded-xl border border-border/70 bg-background/40 p-2.5">
-                      <div className="space-y-1">
-                        <Label className="text-[11px] text-muted-foreground">
-                          Tab Title
-                        </Label>
-                        <Input
-                          value={state.tabTitle}
-                          onChange={(e) =>
-                            onChange({ tabTitle: e.target.value })
-                          }
-                          placeholder="Lerhem Studio"
-                          className="h-8 text-xs"
-                        />
-                      </div>
+                      {state.browserChrome !== "mobile" && (
+                        <>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">
+                              Tab Title
+                            </Label>
+                            <Input
+                              value={state.tabTitle}
+                              onChange={(e) =>
+                                onChange({ tabTitle: e.target.value })
+                              }
+                              placeholder="Lerhem Studio"
+                              className="h-8 text-xs"
+                            />
+                          </div>
 
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-[11px] text-muted-foreground">
-                            URL Accent
-                          </Label>
-                          {state.tabAccentColor && (
-                            <button
-                              type="button"
-                              onClick={() => onChange({ tabAccentColor: "" })}
-                              className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
-                            >
-                              Auto
-                            </button>
-                          )}
-                        </div>
-                        <label className="flex items-center justify-between rounded-lg border border-border/70 bg-card/70 px-2.5 py-1.5 text-xs">
-                          <span className="font-mono text-[11px] uppercase text-muted-foreground">
-                            {resolveTabAccentColor(state)}
-                          </span>
-                          <input
-                            type="color"
-                            value={resolveTabAccentColor(state)}
-                            onChange={(e) =>
-                              onChange({ tabAccentColor: e.target.value })
-                            }
-                            aria-label="Tab URL accent color"
-                            className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
-                          />
-                        </label>
-                      </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-[11px] text-muted-foreground">
+                                URL Accent
+                              </Label>
+                              {state.tabAccentColor && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onChange({ tabAccentColor: "" })
+                                  }
+                                  className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                                >
+                                  Auto
+                                </button>
+                              )}
+                            </div>
+                            <label className="flex items-center justify-between rounded-lg border border-border/70 bg-card/70 px-2.5 py-1.5 text-xs">
+                              <span className="font-mono text-[11px] uppercase text-muted-foreground">
+                                {resolveTabAccentColor(state)}
+                              </span>
+                              <input
+                                type="color"
+                                value={resolveTabAccentColor(state)}
+                                onChange={(e) =>
+                                  onChange({ tabAccentColor: e.target.value })
+                                }
+                                aria-label="Tab URL accent color"
+                                className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
+                              />
+                            </label>
+                          </div>
+                        </>
+                      )}
 
                       <div className="flex gap-1.5">
                         <Button
@@ -661,9 +682,10 @@ export function ControlSidebar({
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            onClick={() =>
+                            onClick={() => {
+                              uploadRequestTokensRef.current.customScreenshotUrl += 1
                               onChange({ customScreenshotUrl: "" })
-                            }
+                            }}
                             aria-label="Clear custom screenshot"
                           >
                             <IconTrash />
@@ -932,10 +954,14 @@ export function ControlSidebar({
 
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">
+                      <Label
+                        id={socialQrLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
                         Scannable QR Code
                       </Label>
                       <Switch
+                        aria-labelledby={socialQrLabelId}
                         checked={state.socialShowQr}
                         onCheckedChange={(checked) =>
                           onChange({ socialShowQr: checked })

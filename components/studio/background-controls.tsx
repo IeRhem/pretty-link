@@ -157,11 +157,14 @@ function PatternThumb({ pattern }: { pattern: BackgroundPattern }) {
 export function BackgroundControls({
   state,
   onChange,
+  getUploadResetToken,
 }: {
   state: StudioState
   onChange: (patch: Partial<StudioState>) => void
+  getUploadResetToken?: () => number
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const uploadTokenRef = React.useRef(0)
   const patternIntensityLabelId = React.useId()
   const [unsplashQuery, setUnsplashQuery] = React.useState("")
   const [unsplashCategory, setUnsplashCategory] =
@@ -200,8 +203,16 @@ export function BackgroundControls({
 
   const handleFileUpload = (file: File | undefined) => {
     if (!file || !file.type.startsWith("image/")) return
+    const token = ++uploadTokenRef.current
+    const resetToken = getUploadResetToken?.() ?? 0
     const reader = new FileReader()
     reader.onload = () => {
+      if (
+        uploadTokenRef.current !== token ||
+        (getUploadResetToken?.() ?? 0) !== resetToken
+      ) {
+        return
+      }
       if (typeof reader.result === "string") {
         onChange({
           backgroundType: "image",

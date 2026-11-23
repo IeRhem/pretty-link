@@ -349,13 +349,13 @@ function drawQrOnCanvas(
   x: number,
   y: number,
   size: number,
-  darkColor = "#09090B"
+  darkColor = "#09090B",
+  quietModules = 4
 ) {
   const matrix = generateQrMatrix(value)
   const n = matrix.length
-  const pad = Math.round(size * 0.09)
-  const inner = size - pad * 2
-  const cell = inner / n
+  const totalModules = n + quietModules * 2
+  const cell = size / totalModules
 
   ctx.save()
   roundedRectPath(ctx, x, y, size, size, Math.round(size * 0.14))
@@ -364,14 +364,15 @@ function drawQrOnCanvas(
 
   ctx.fillStyle = darkColor
   for (let r = 0; r < n; r++) {
+    const y0 = Math.round(y + (r + quietModules) * cell)
+    const y1 = Math.round(y + (r + quietModules + 1) * cell)
+    const h = Math.max(1, y1 - y0)
     for (let c = 0; c < n; c++) {
       if (matrix[r]![c]) {
-        ctx.fillRect(
-          x + pad + c * cell,
-          y + pad + r * cell,
-          Math.ceil(cell),
-          Math.ceil(cell)
-        )
+        const x0 = Math.round(x + (c + quietModules) * cell)
+        const x1 = Math.round(x + (c + quietModules + 1) * cell)
+        const w = Math.max(1, x1 - x0)
+        ctx.fillRect(x0, y0, w, h)
       }
     }
   }
@@ -780,6 +781,7 @@ function drawPosterOverlays(
 
   if (state.showPosterFooter) {
     const bottomY = height * (1 - 0.045)
+    const maxFooterW = Math.round(width * 0.84)
     const titleSize = Math.round(14 * scaleFactor)
     const subSize = Math.round(10.5 * scaleFactor)
     const gap = Math.round(2 * scaleFactor)
@@ -795,8 +797,20 @@ function drawPosterOverlays(
       const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
       ctx.font = `500 ${subSize}px ${sansFont}`
       ctx.fillStyle = "rgba(255, 255, 255, 0.75)"
-      ctx.fillText(state.posterFooterSubtitle, width / 2, cursorBottom)
-      cursorBottom -= Math.round(subSize * 1.25) + gap
+      const subLineH = Math.round(subSize * 1.25)
+      const subLines = wrapLines(
+        ctx,
+        state.posterFooterSubtitle,
+        maxFooterW,
+        Number.POSITIVE_INFINITY
+      )
+      for (let i = subLines.length - 1; i >= 0; i--) {
+        ctx.fillText(subLines[i]!, width / 2, cursorBottom)
+        cursorBottom -= subLineH
+      }
+      if (hasTitle) {
+        cursorBottom -= gap
+      }
     }
 
     if (hasTitle) {
@@ -809,7 +823,17 @@ function drawPosterOverlays(
         ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.06 * titleSize).toFixed(2)}px`
       }
       ctx.fillStyle = "#FFFFFF"
-      ctx.fillText(state.posterFooterTitle, width / 2, cursorBottom)
+      const titleLineH = Math.round(titleSize * 1.25)
+      const titleLines = wrapLines(
+        ctx,
+        state.posterFooterTitle,
+        maxFooterW,
+        Number.POSITIVE_INFINITY
+      )
+      for (let i = titleLines.length - 1; i >= 0; i--) {
+        ctx.fillText(titleLines[i]!, width / 2, cursorBottom)
+        cursorBottom -= titleLineH
+      }
     }
     ctx.restore()
   }
@@ -834,11 +858,11 @@ function drawWebQrBadge(
   ctx.shadowBlur = Math.round(16 * scaleFactor)
   ctx.shadowOffsetY = Math.round(6 * scaleFactor)
   roundedRectPath(ctx, qrX, qrY, qrSize, qrSize, qrR)
-  ctx.fillStyle = "rgba(255, 255, 255, 0.96)"
+  ctx.fillStyle = "#FFFFFF"
   ctx.fill()
   ctx.restore()
 
-  drawQrOnCanvas(ctx, targetUrl, qrX, qrY, qrSize)
+  drawQrOnCanvas(ctx, targetUrl, qrX, qrY, qrSize, "#09090B", 4)
 
   ctx.save()
   roundedRectPath(ctx, qrX, qrY, qrSize, qrSize, Math.round(qrSize * 0.14))
@@ -867,7 +891,7 @@ function drawCapturedFromBadge(
   const accentColor = resolveTabAccentColor(state)
   const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
 
-  const footerOffset = getPosterFooterStackOffset(state, scaleFactor)
+  const footerOffset = getPosterFooterStackOffset(state, scaleFactor, width)
   const maxPillPct = state.webShowQr
     ? footerOffset > 0
       ? 0.72
@@ -1483,7 +1507,11 @@ function drawWebTabShowcase(
   const pillY = navY + (navBarH - pillH) / 2
   const pillW = Math.max(80, fx + fw - navPadX - pillX)
   const pillR = Math.round(12 * uiScale)
-  const urlFgColor = resolveTabUrlForeground(accentColor, isDarkChrome)
+  const urlFgColor = resolveTabUrlForeground(
+    accentColor,
+    isDarkChrome,
+    isGlassChrome
+  )
 
   roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillR)
   ctx.fillStyle = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)

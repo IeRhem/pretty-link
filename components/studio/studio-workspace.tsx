@@ -20,7 +20,11 @@ import {
   type StudioState,
   type WebLayoutStyle,
 } from "@/lib/studio-types"
-import { decodeShareState, encodeShareState } from "@/lib/url-utils"
+import {
+  decodeShareState,
+  encodeShareState,
+  SHARE_STATE_MAX_LENGTH,
+} from "@/lib/url-utils"
 
 export function StudioWorkspace() {
   const searchParams = useSearchParams()
@@ -46,6 +50,7 @@ export function StudioWorkspace() {
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchAbortRef = React.useRef<AbortController | null>(null)
   const lastFetchedUrlRef = React.useRef<string>("")
+  const currentUrlRef = React.useRef<string>(state.url)
   const uploadResetTokenRef = React.useRef(0)
   const drawerRef = React.useRef<HTMLDivElement>(null)
   const stageWrapperRef = React.useRef<HTMLDivElement>(null)
@@ -56,6 +61,10 @@ export function StudioWorkspace() {
   React.useEffect(() => {
     exportOpenRef.current = exportOpen
   }, [exportOpen])
+
+  React.useEffect(() => {
+    currentUrlRef.current = state.url
+  }, [state.url])
 
   const notify = React.useCallback((message: string) => {
     setToast(message)
@@ -71,6 +80,15 @@ export function StudioWorkspace() {
   const updateState = React.useCallback((patch: Partial<StudioState>) => {
     if (patch.customFaviconUrl !== undefined) {
       setPreviewGeneration((g) => g + 1)
+    }
+    if (patch.url !== undefined) {
+      if (patch.url.trim() !== currentUrlRef.current.trim()) {
+        fetchAbortRef.current?.abort()
+        fetchAbortRef.current = null
+        lastFetchedUrlRef.current = ""
+        setIsFetching(false)
+      }
+      currentUrlRef.current = patch.url
     }
     setState((prev) => {
       const next = { ...prev, ...patch }
@@ -119,7 +137,12 @@ export function StudioWorkspace() {
           { signal: controller.signal }
         )
         const data = (await res.json()) as LinkMetadata & { error?: string }
-        if (controller.signal.aborted) return
+        if (
+          controller.signal.aborted ||
+          currentUrlRef.current.trim() !== target
+        ) {
+          return
+        }
 
         if (!res.ok) {
           notify(data.error || "Could not fetch preview for that URL")
@@ -129,19 +152,22 @@ export function StudioWorkspace() {
         const platformConfig =
           SOCIAL_PLATFORMS[data.detectedPlatform] ?? SOCIAL_PLATFORMS.custom
 
-        setState((prev) => ({
-          ...prev,
-          metadata: data,
-          customScreenshotUrl: "",
-          socialPlatform: data.detectedPlatform,
-          socialDisplayName: data.title || prev.socialDisplayName,
-          socialHandle: data.handle || prev.socialHandle,
-          socialBio: data.description ?? "",
-          socialMetrics: data.metrics ?? "",
-          socialCtaLabel: platformConfig.defaultCta,
-          socialAvatarUrl: data.avatarUrl ?? "",
-          socialCoverUrl: data.coverUrl ?? "",
-        }))
+        setState((prev) => {
+          if (prev.url.trim() !== target) return prev
+          return {
+            ...prev,
+            metadata: data,
+            customScreenshotUrl: "",
+            socialPlatform: data.detectedPlatform,
+            socialDisplayName: data.title || prev.socialDisplayName,
+            socialHandle: data.handle || prev.socialHandle,
+            socialBio: data.description ?? "",
+            socialMetrics: data.metrics ?? "",
+            socialCtaLabel: platformConfig.defaultCta,
+            socialAvatarUrl: data.avatarUrl ?? "",
+            socialCoverUrl: data.coverUrl ?? "",
+          }
+        })
         setPreviewGeneration((g) => g + 1)
         notify(`Loaded preview for ${data.displayUrl}`)
       } catch (err) {
@@ -188,6 +214,12 @@ export function StudioWorkspace() {
 
   const handleShareLink = React.useCallback(async () => {
     const encoded = encodeShareState(state)
+    if (encoded.length > SHARE_STATE_MAX_LENGTH) {
+      notify(
+        "Share link is too large. Shorten text or remove long custom URLs to share."
+      )
+      return
+    }
     const shareUrl = `${window.location.origin}/share?d=${encoded}`
     try {
       await navigator.clipboard.writeText(shareUrl)

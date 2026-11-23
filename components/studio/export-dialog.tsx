@@ -31,7 +31,12 @@ import type {
   ExportScale,
   StudioState,
 } from "@/lib/studio-types"
-import { encodeShareState, formatDisplayUrl, normalizeUrl } from "@/lib/url-utils"
+import {
+  encodeShareState,
+  formatDisplayUrl,
+  normalizeUrl,
+  SHARE_STATE_MAX_LENGTH,
+} from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
 
 export function ExportDialog({
@@ -96,11 +101,21 @@ export function ExportDialog({
 
   const handleCopyShareLink = async () => {
     const encoded = encodeShareState(state)
-    const shareUrl = `${window.location.origin}/share?d=${encoded}`
-    await navigator.clipboard.writeText(shareUrl)
-    setCopiedLink(true)
-    onNotify("Copied shareable PrettyLink page URL")
-    setTimeout(() => setCopiedLink(false), 1800)
+    if (encoded.length > SHARE_STATE_MAX_LENGTH) {
+      onNotify(
+        "Share link is too large. Shorten text or remove long custom URLs to share."
+      )
+      return
+    }
+    try {
+      const shareUrl = `${window.location.origin}/share?d=${encoded}`
+      await navigator.clipboard.writeText(shareUrl)
+      setCopiedLink(true)
+      onNotify("Copied shareable PrettyLink page URL")
+      setTimeout(() => setCopiedLink(false), 1800)
+    } catch {
+      onNotify("Could not copy share link to clipboard")
+    }
   }
 
   return (

@@ -359,18 +359,6 @@ export function PreviewStage({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-
-          {onOpenExport && (
-            <Button
-              type="button"
-              variant="default"
-              onClick={onOpenExport}
-              className="h-10 gap-1.5 rounded-xl px-3.5 font-heading text-xs font-semibold shadow-sm lg:hidden [@media(pointer:coarse)]:min-h-11"
-            >
-              <IconDownload className="size-3.5" aria-hidden="true" />
-              Export
-            </Button>
-          )}
         </div>
 
         <div className="hidden max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-2xs backdrop-blur-md @4xl/stage:flex">
@@ -401,6 +389,18 @@ export function PreviewStage({
             )
           })}
         </div>
+
+        {onOpenExport && (
+          <Button
+            type="button"
+            variant="default"
+            onClick={onOpenExport}
+            className="h-10 gap-1.5 rounded-xl px-3.5 font-heading text-xs font-semibold shadow-sm lg:hidden [@media(pointer:coarse)]:min-h-11"
+          >
+            <IconDownload className="size-3.5" aria-hidden="true" />
+            Export
+          </Button>
+        )}
       </footer>
     </section>
   )

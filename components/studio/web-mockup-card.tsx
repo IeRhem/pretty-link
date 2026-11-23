@@ -89,12 +89,17 @@ function getContrastRatio(
 
 export function resolveTabUrlForeground(
   accentColor: string,
-  isDarkChrome: boolean
+  isDarkChrome: boolean,
+  isGlassChrome = false
 ): string {
   const accentRgb = parseHexRgb(accentColor)
+  // Glass Header uses a translucent bar (rgba(255, 255, 255, 0.95));
+  // evaluate against the darkest supported backdrop (#000000 => 242) as well as white (#FFFFFF => 255).
   const baseRgb: readonly [number, number, number] = isDarkChrome
     ? [24, 24, 27]
-    : [255, 255, 255]
+    : isGlassChrome
+      ? [242, 242, 242]
+      : [255, 255, 255]
   const alpha = isDarkChrome ? 0.18 : 0.1
   const pillRgb: [number, number, number] = [
     accentRgb[0] * alpha + baseRgb[0] * (1 - alpha),
@@ -102,7 +107,17 @@ export function resolveTabUrlForeground(
     accentRgb[2] * alpha + baseRgb[2] * (1 - alpha),
   ]
 
-  if (getContrastRatio(accentRgb, pillRgb) >= 4.5) {
+  let passes = getContrastRatio(accentRgb, pillRgb) >= 4.5
+  if (passes && !isDarkChrome && isGlassChrome) {
+    const lightPillRgb: [number, number, number] = [
+      accentRgb[0] * alpha + 255 * (1 - alpha),
+      accentRgb[1] * alpha + 255 * (1 - alpha),
+      accentRgb[2] * alpha + 255 * (1 - alpha),
+    ]
+    passes = getContrastRatio(accentRgb, lightPillRgb) >= 4.5
+  }
+
+  if (passes) {
     return accentColor
   }
 
@@ -112,16 +127,77 @@ export function resolveTabUrlForeground(
     : "#18181B"
 }
 
+function countWrappedTextLines(
+  text: string,
+  maxWidthPx: number,
+  approxCharWidthPx: number
+): number {
+  const trimmed = text.trim()
+  if (!trimmed) return 0
+  if (maxWidthPx <= 0 || approxCharWidthPx <= 0) return 1
+  const maxCharsPerLine = Math.max(
+    1,
+    Math.floor(maxWidthPx / approxCharWidthPx)
+  )
+  let totalLines = 0
+  for (const rawLine of trimmed.split("\n")) {
+    const words = rawLine.trim().split(/\s+/).filter(Boolean)
+    if (words.length === 0) {
+      totalLines += 1
+      continue
+    }
+    let lines = 1
+    let currentLen = 0
+    for (const word of words) {
+      if (word.length > maxCharsPerLine) {
+        if (currentLen > 0) {
+          lines += 1
+          currentLen = 0
+        }
+        lines += Math.floor((word.length - 1) / maxCharsPerLine)
+        currentLen = word.length % maxCharsPerLine || maxCharsPerLine
+      } else if (currentLen === 0) {
+        currentLen = word.length
+      } else if (currentLen + 1 + word.length <= maxCharsPerLine) {
+        currentLen += 1 + word.length
+      } else {
+        lines += 1
+        currentLen = word.length
+      }
+    }
+    totalLines += lines
+  }
+  return Math.max(1, totalLines)
+}
+
 export function getPosterFooterStackOffset(
   state: StudioState,
-  scaleFactor: number
+  scaleFactor: number,
+  canvasWidth = 500 * scaleFactor
 ): number {
   if (!state.showPosterFooter) return 0
   const hasTitle = Boolean(state.posterFooterTitle.trim())
   const hasSub = Boolean(state.posterFooterSubtitle.trim())
   if (!hasTitle && !hasSub) return 0
-  const titleH = hasTitle ? Math.round(14 * scaleFactor * 1.25) : 0
-  const subH = hasSub ? Math.round(10.5 * scaleFactor * 1.25) : 0
+  const maxFooterWidth = Math.max(80, Math.round(canvasWidth * 0.84))
+  const titleFontSize = Math.round(14 * scaleFactor)
+  const subFontSize = Math.round(10.5 * scaleFactor)
+  const titleLines = hasTitle
+    ? countWrappedTextLines(
+        state.posterFooterTitle,
+        maxFooterWidth,
+        titleFontSize * 0.64
+      )
+    : 0
+  const subLines = hasSub
+    ? countWrappedTextLines(
+        state.posterFooterSubtitle,
+        maxFooterWidth,
+        subFontSize * 0.56
+      )
+    : 0
+  const titleH = titleLines * Math.round(14 * scaleFactor * 1.25)
+  const subH = subLines * Math.round(10.5 * scaleFactor * 1.25)
   const innerGap = hasTitle && hasSub ? Math.round(2 * scaleFactor) : 0
   const rowGap = Math.round(10 * scaleFactor)
   return titleH + subH + innerGap + rowGap
@@ -298,16 +374,28 @@ export function PosterOverlays({
   const accentColor = resolveTabAccentColor(state)
   const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
   const qrSize = Math.round(54 * scaleFactor)
-  const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
+  const activeMetadata =
+    state.metadata &&
+    (!state.metadata.requestedUrl ||
+      normalizeUrl(state.metadata.requestedUrl) === normalizeUrl(state.url))
+      ? state.metadata
+      : null
+  const domainLabel = activeMetadata?.domain || formatDisplayUrl(state.url)
 
   const cornerSize = Math.round(46 * scaleFactor)
   const headlineScale = (state.posterHeadlineSize ?? 100) / 100
   const headlineFontSize = Math.round(42 * scaleFactor * headlineScale)
   const headlineLines = state.posterHeadline.split("\n")
   const hasAccentText = Boolean(state.posterAccentText.trim())
-  const footerOffset = getPosterFooterStackOffset(state, scaleFactor)
+  const footerOffset = getPosterFooterStackOffset(
+    state,
+    scaleFactor,
+    logicalWidth
+  )
   const hasFooterTitle = Boolean(state.posterFooterTitle.trim())
   const hasFooterSubtitle = Boolean(state.posterFooterSubtitle.trim())
+  const hasVisibleFooter =
+    state.showPosterFooter && (hasFooterTitle || hasFooterSubtitle)
 
   const cornerPosStyle: React.CSSProperties =
     state.cornerIconPosition === "top-center"
@@ -390,108 +478,116 @@ export function PosterOverlays({
         </div>
       )}
 
-      {state.showPosterFooter && (
-        <div
-          style={{ bottom: "4.5%" }}
-          className="absolute inset-x-0 z-0 flex flex-col items-center text-center"
-        >
-          {hasFooterTitle && (
-            <div
-              style={{
-                fontSize: `${Math.round(14 * scaleFactor)}px`,
-                lineHeight: 1.25,
-                letterSpacing: "0.06em",
-              }}
-              className="font-heading font-bold text-white"
-            >
-              {state.posterFooterTitle}
-            </div>
-          )}
-          {hasFooterSubtitle && (
-            <div
-              style={{
-                fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-                lineHeight: 1.25,
-                marginTop: hasFooterTitle
-                  ? `${Math.round(2 * scaleFactor)}px`
-                  : undefined,
-                color: "rgba(255, 255, 255, 0.75)",
-              }}
-              className="font-medium"
-            >
-              {state.posterFooterSubtitle}
-            </div>
-          )}
-        </div>
-      )}
-
-      {showCapturedFrom && (
+      {(hasVisibleFooter || showCapturedFrom) && (
         <div
           style={{
-            bottom:
-              footerOffset > 0 ? `calc(4.5% + ${footerOffset}px)` : "4.5%",
-            ...(footerOffset > 0 && showWebQr
-              ? { left: "4.5%" }
-              : { left: "50%", transform: "translateX(-50%)" }),
-            maxWidth: showWebQr
-              ? footerOffset > 0
-                ? "72%"
-                : "64%"
-              : "86%",
-            height: `${Math.round(30 * scaleFactor)}px`,
-            paddingLeft: `${Math.round(8 * scaleFactor)}px`,
-            paddingRight: `${Math.round(12 * scaleFactor)}px`,
-            gap: `${Math.round(6 * scaleFactor)}px`,
+            bottom: "4.5%",
+            gap:
+              hasVisibleFooter && showCapturedFrom
+                ? `${Math.round(10 * scaleFactor)}px`
+                : undefined,
           }}
-          className="absolute z-20 flex items-center rounded-full bg-zinc-950/90 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-md"
+          className="absolute inset-x-0 z-20 flex flex-col items-center"
         >
-          {activeFavicon ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={`${previewGeneration}-${activeFavicon}`}
-              src={activeFavicon}
-              alt=""
-              onError={() => markFaviconFailed(activeFavicon)}
+          {showCapturedFrom && (
+            <div
               style={{
-                width: `${Math.round(16 * scaleFactor)}px`,
-                height: `${Math.round(16 * scaleFactor)}px`,
+                ...(footerOffset > 0 && showWebQr
+                  ? { alignSelf: "flex-start", marginLeft: "4.5%" }
+                  : undefined),
+                maxWidth: showWebQr
+                  ? footerOffset > 0
+                    ? "72%"
+                    : "64%"
+                  : "86%",
+                height: `${Math.round(30 * scaleFactor)}px`,
+                paddingLeft: `${Math.round(8 * scaleFactor)}px`,
+                paddingRight: `${Math.round(12 * scaleFactor)}px`,
+                gap: `${Math.round(6 * scaleFactor)}px`,
               }}
-              className="shrink-0 rounded-full object-contain"
-            />
-          ) : (
-            <BrandMarkSvg
-              accentColor={accentColor}
-              style={{
-                width: `${Math.round(16 * scaleFactor)}px`,
-                height: `${Math.round(16 * scaleFactor)}px`,
-              }}
-              className="shrink-0"
-            />
+              className="flex items-center rounded-full bg-zinc-950/90 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-md"
+            >
+              {activeFavicon ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${previewGeneration}-${activeFavicon}`}
+                  src={activeFavicon}
+                  alt=""
+                  onError={() => markFaviconFailed(activeFavicon)}
+                  style={{
+                    width: `${Math.round(16 * scaleFactor)}px`,
+                    height: `${Math.round(16 * scaleFactor)}px`,
+                  }}
+                  className="shrink-0 rounded-full object-contain"
+                />
+              ) : (
+                <BrandMarkSvg
+                  accentColor={accentColor}
+                  style={{
+                    width: `${Math.round(16 * scaleFactor)}px`,
+                    height: `${Math.round(16 * scaleFactor)}px`,
+                  }}
+                  className="shrink-0"
+                />
+              )}
+              <span
+                style={{
+                  fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+                  color: "rgba(255, 255, 255, 0.65)",
+                }}
+                className="shrink-0 font-medium whitespace-nowrap"
+              >
+                Captured from
+              </span>
+              <span
+                style={{ fontSize: `${Math.round(11 * scaleFactor)}px` }}
+                className="min-w-0 truncate font-semibold"
+              >
+                {domainLabel}
+              </span>
+              <IconArrowUpRight
+                style={{
+                  width: `${Math.round(12 * scaleFactor)}px`,
+                  height: `${Math.round(12 * scaleFactor)}px`,
+                  opacity: 0.75,
+                }}
+                className="shrink-0"
+                stroke={2.1}
+              />
+            </div>
           )}
-          <span
-            style={{
-              fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-              color: "rgba(255, 255, 255, 0.65)",
-            }}
-            className="shrink-0 font-medium whitespace-nowrap"
-          >
-            Captured from
-          </span>
-          <span
-            style={{ fontSize: `${Math.round(11 * scaleFactor)}px` }}
-            className="min-w-0 truncate font-semibold"
-          >
-            {domainLabel}
-          </span>
-          <IconArrowUpRight
-            style={{
-              width: `${Math.round(12 * scaleFactor)}px`,
-              height: `${Math.round(12 * scaleFactor)}px`,
-              opacity: 0.75,
-            }}
-            className="shrink-0"
-            stroke={2.1}
-          />
+
+          {hasVisibleFooter && (
+            <div className="flex max-w-[84%] flex-col items-center text-center">
+              {hasFooterTitle && (
+                <div
+                  style={{
+                    fontSize: `${Math.round(14 * scaleFactor)}px`,
+                    lineHeight: 1.25,
+                    letterSpacing: "0.06em",
+                  }}
+                  className="font-heading font-bold text-white"
+                >
+                  {state.posterFooterTitle}
+                </div>
+              )}
+              {hasFooterSubtitle && (
+                <div
+                  style={{
+                    fontSize: `${Math.round(10.5 * scaleFactor)}px`,
+                    lineHeight: 1.25,
+                    marginTop: hasFooterTitle
+                      ? `${Math.round(2 * scaleFactor)}px`
+                      : undefined,
+                    color: "rgba(255, 255, 255, 0.75)",
+                  }}
+                  className="font-medium"
+                >
+                  {state.posterFooterSubtitle}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1057,7 +1153,11 @@ export function WebMockupCard({
       (isDefaultLerhem ? "Lerhem Studio" : displayUrl)
     const urlPillBg = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)
     const urlPillBorder = hexToTintRgba(accentColor, isDarkChrome ? 0.28 : 0.18)
-    const urlFgColor = resolveTabUrlForeground(accentColor, isDarkChrome)
+    const urlFgColor = resolveTabUrlForeground(
+      accentColor,
+      isDarkChrome,
+      isGlassChrome
+    )
     const navIconColor = isDarkChrome ? "#E4E4E7" : "#18181B"
 
     return (
