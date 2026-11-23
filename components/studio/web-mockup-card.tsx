@@ -21,22 +21,29 @@ import { cn } from "@/lib/utils"
 const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
 
 export function resolveTabAccentColor(state: StudioState): string {
-  const custom = state.tabAccentColor.trim()
+  const custom =
+    typeof state.tabAccentColor === "string"
+      ? state.tabAccentColor.trim()
+      : ""
   if (HEX_COLOR_RE.test(custom)) return custom
 
-  const theme = state.metadata?.themeColor?.trim()
+  const theme =
+    typeof state.metadata?.themeColor === "string"
+      ? state.metadata.themeColor.trim()
+      : ""
   if (theme && HEX_COLOR_RE.test(theme)) return theme
 
   if (state.backgroundType === "color") {
-    const bgHex =
+    const rawBgHex =
       state.colorFillMode === "solid" ? state.solidColor : state.gradientFrom
-    if (HEX_COLOR_RE.test(bgHex.trim())) return bgHex.trim()
+    const bgHex = typeof rawBgHex === "string" ? rawBgHex.trim() : ""
+    if (HEX_COLOR_RE.test(bgHex)) return bgHex
   }
 
   return "#38A869"
 }
 
-export function hexToTintRgba(hex: string, alpha: number): string {
+function parseHexRgb(hex: string): [number, number, number] {
   const clean = hex.trim().replace(/^#/, "")
   let r = 56
   let g = 168
@@ -51,9 +58,58 @@ export function hexToTintRgba(hex: string, alpha: number): string {
     b = parseInt(clean.slice(4, 6), 16)
   }
   if ([r, g, b].some((n) => Number.isNaN(n))) {
-    return `rgba(56, 168, 105, ${alpha})`
+    return [56, 168, 105]
   }
+  return [r, g, b]
+}
+
+export function hexToTintRgba(hex: string, alpha: number): string {
+  const [r, g, b] = parseHexRgb(hex)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function getRelativeLuminance([r, g, b]: readonly [number, number, number]): number {
+  const toLinear = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
+}
+
+function getContrastRatio(
+  rgbA: readonly [number, number, number],
+  rgbB: readonly [number, number, number]
+): number {
+  const lumA = getRelativeLuminance(rgbA)
+  const lumB = getRelativeLuminance(rgbB)
+  const lighter = Math.max(lumA, lumB)
+  const darker = Math.min(lumA, lumB)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+export function resolveTabUrlForeground(
+  accentColor: string,
+  isDarkChrome: boolean
+): string {
+  const accentRgb = parseHexRgb(accentColor)
+  const baseRgb: readonly [number, number, number] = isDarkChrome
+    ? [24, 24, 27]
+    : [255, 255, 255]
+  const alpha = isDarkChrome ? 0.18 : 0.1
+  const pillRgb: [number, number, number] = [
+    accentRgb[0] * alpha + baseRgb[0] * (1 - alpha),
+    accentRgb[1] * alpha + baseRgb[1] * (1 - alpha),
+    accentRgb[2] * alpha + baseRgb[2] * (1 - alpha),
+  ]
+
+  if (getContrastRatio(accentRgb, pillRgb) >= 3) {
+    return accentColor
+  }
+
+  return getContrastRatio([244, 244, 245], pillRgb) >=
+    getContrastRatio([24, 24, 27], pillRgb)
+    ? "#F4F4F5"
+    : "#18181B"
 }
 
 function BrandMarkSvg({
@@ -938,6 +994,7 @@ export function WebMockupCard({
       (isDefaultLerhem ? "Lerhem Studio" : displayUrl)
     const urlPillBg = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)
     const urlPillBorder = hexToTintRgba(accentColor, isDarkChrome ? 0.28 : 0.18)
+    const urlFgColor = resolveTabUrlForeground(accentColor, isDarkChrome)
     const navIconColor = isDarkChrome ? "#E4E4E7" : "#18181B"
 
     return (
@@ -1143,13 +1200,13 @@ export function WebMockupCard({
             className="flex min-w-0 flex-1 items-center"
           >
             <SolidPadlockSvg
-              color={accentColor}
+              color={urlFgColor}
               style={{ width: `${lockSize}px`, height: `${lockSize}px` }}
             />
             <span
               style={{
                 fontSize: `${Math.round(14.5 * scaleFactor)}px`,
-                color: accentColor,
+                color: urlFgColor,
                 letterSpacing: "-0.01em",
               }}
               className="min-w-0 flex-1 truncate font-medium"
@@ -1160,7 +1217,7 @@ export function WebMockupCard({
               style={{
                 width: `${Math.round(14 * scaleFactor)}px`,
                 height: `${Math.round(14 * scaleFactor)}px`,
-                color: accentColor,
+                color: urlFgColor,
                 opacity: 0.7,
               }}
               className="shrink-0"

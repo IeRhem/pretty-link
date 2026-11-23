@@ -228,7 +228,7 @@ export function MockupFrame({
   return (
     <div
       ref={containerRef}
-      className={cn("flex size-full items-center justify-center", className)}
+      className={cn("flex size-full max-h-full max-w-full items-center justify-center", className)}
     >
       <div
         style={{ width: `${scaledW}px`, height: `${scaledH}px` }}

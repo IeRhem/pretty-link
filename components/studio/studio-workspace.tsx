@@ -39,10 +39,22 @@ export function StudioWorkspace() {
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copiedImage, setCopiedImage] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
+  const [isCompactViewport, setIsCompactViewport] = React.useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
 
+  const drawerId = React.useId()
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchAbortRef = React.useRef<AbortController | null>(null)
   const lastFetchedUrlRef = React.useRef<string>("")
+  const drawerRef = React.useRef<HTMLDivElement>(null)
+  const stageWrapperRef = React.useRef<HTMLDivElement>(null)
+  const menuTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const drawerCloseBtnRef = React.useRef<HTMLButtonElement>(null)
+  const exportOpenRef = React.useRef(exportOpen)
+
+  React.useEffect(() => {
+    exportOpenRef.current = exportOpen
+  }, [exportOpen])
 
   const notify = React.useCallback((message: string) => {
     setToast(message)
@@ -264,6 +276,78 @@ export function StudioWorkspace() {
     [fetchPreview]
   )
 
+  // Sync compact viewport breakpoint for the slide-over controls sidebar
+  React.useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023.98px)")
+    const syncViewport = (matches: boolean) => {
+      setIsCompactViewport(matches)
+      if (!matches) {
+        setMobileMenuOpen(false)
+      }
+    }
+    syncViewport(mq.matches)
+    const onMqChange = (e: MediaQueryListEvent) => syncViewport(e.matches)
+    mq.addEventListener("change", onMqChange)
+    return () => mq.removeEventListener("change", onMqChange)
+  }, [])
+
+  const openMobileMenu = React.useCallback(() => {
+    if (!isCompactViewport) return
+    setMobileMenuOpen(true)
+  }, [isCompactViewport])
+
+  const closeMobileMenu = React.useCallback((restoreFocus = true) => {
+    setMobileMenuOpen(false)
+    if (restoreFocus) {
+      requestAnimationFrame(() => {
+        menuTriggerRef.current?.focus()
+      })
+    }
+  }, [])
+
+  // Keep off-screen sidebar and covered preview stage inert when appropriate
+  React.useEffect(() => {
+    if (drawerRef.current) {
+      drawerRef.current.inert = isCompactViewport && !mobileMenuOpen
+    }
+    if (stageWrapperRef.current) {
+      stageWrapperRef.current.inert = isCompactViewport && mobileMenuOpen
+    }
+  }, [isCompactViewport, mobileMenuOpen])
+
+  // Move focus into sidebar when opened and support Escape key dismissal
+  React.useEffect(() => {
+    if (!isCompactViewport || !mobileMenuOpen) return
+    const rafId = requestAnimationFrame(() => {
+      drawerCloseBtnRef.current?.focus({ preventScroll: true })
+    })
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        exportOpenRef.current
+      ) {
+        return
+      }
+      if (
+        document.querySelector(
+          '[data-slot="popover-content"], [data-slot="dialog-content"]'
+        )
+      ) {
+        return
+      }
+      event.preventDefault()
+      closeMobileMenu(true)
+    }
+    document.addEventListener("keydown", onKeyDown)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      document.removeEventListener("keydown", onKeyDown)
+    }
+  }, [isCompactViewport, mobileMenuOpen, closeMobileMenu])
+
   // Keyboard shortcuts
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -284,35 +368,66 @@ export function StudioWorkspace() {
   }, [handleQuickCopy])
 
   return (
-    <main className="flex min-h-screen w-full flex-col gap-4 bg-background p-3 md:h-screen md:flex-row md:overflow-hidden md:p-4">
-      <ControlSidebar
-        state={state}
-        isFetching={isFetching}
-        copiedImage={copiedImage}
-        onChange={updateState}
-        onFetchUrl={fetchPreview}
-        onOpenExport={() => setExportOpen(true)}
-        onQuickCopy={handleQuickCopy}
-      />
+    <main className="flex min-h-dvh w-full flex-col gap-3 bg-background pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] sm:p-3 lg:h-dvh lg:flex-row lg:gap-4 lg:overflow-hidden lg:p-4">
+      <div
+        ref={drawerRef}
+        id={drawerId}
+        role={isCompactViewport ? "dialog" : undefined}
+        aria-label={isCompactViewport ? "Studio controls" : undefined}
+        aria-modal={isCompactViewport && mobileMenuOpen ? true : undefined}
+        data-open={mobileMenuOpen ? "true" : "false"}
+        className="studio-drawer"
+      >
+        <div
+          className="studio-drawer-backdrop"
+          aria-hidden="true"
+          onClick={() => closeMobileMenu(true)}
+        />
+        <div className="studio-drawer-sheet">
+          <ControlSidebar
+            state={state}
+            isFetching={isFetching}
+            copiedImage={copiedImage}
+            onChange={updateState}
+            onFetchUrl={fetchPreview}
+            onOpenExport={() => {
+              if (isCompactViewport && mobileMenuOpen) {
+                closeMobileMenu(false)
+              }
+              setExportOpen(true)
+            }}
+            onQuickCopy={handleQuickCopy}
+            onCloseMobile={() => closeMobileMenu(true)}
+            closeButtonRef={drawerCloseBtnRef}
+          />
+        </div>
+      </div>
 
-      <PreviewStage
-        state={state}
-        isFetching={isFetching}
-        previewGeneration={previewGeneration}
-        onToggleTheme={handleToggleTheme}
-        onRandomize={handleRandomize}
-        onReset={handleReset}
-        onShareLink={handleShareLink}
-        onApplyTemplate={handleApplyTemplate}
-        onDropImage={(dataUrl) =>
-          updateState({
-            backgroundType: "image",
-            backgroundImageUrl: dataUrl,
-            unsplashPhotoId: "",
-            unsplashPhotographer: "",
-          })
-        }
-      />
+      <div ref={stageWrapperRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <PreviewStage
+          state={state}
+          isFetching={isFetching}
+          previewGeneration={previewGeneration}
+          drawerId={drawerId}
+          mobileMenuOpen={mobileMenuOpen}
+          onOpenMobileMenu={openMobileMenu}
+          menuTriggerRef={menuTriggerRef}
+          onOpenExport={() => setExportOpen(true)}
+          onToggleTheme={handleToggleTheme}
+          onRandomize={handleRandomize}
+          onReset={handleReset}
+          onShareLink={handleShareLink}
+          onApplyTemplate={handleApplyTemplate}
+          onDropImage={(dataUrl) =>
+            updateState({
+              backgroundType: "image",
+              backgroundImageUrl: dataUrl,
+              unsplashPhotoId: "",
+              unsplashPhotographer: "",
+            })
+          }
+        />
+      </div>
 
       <ExportDialog
         open={exportOpen}
@@ -326,7 +441,7 @@ export function StudioWorkspace() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed right-5 bottom-5 z-50 rounded-xl border border-border bg-card/95 px-4 py-2.5 text-xs font-medium text-foreground shadow-xl backdrop-blur-md"
+          className="fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-50 mx-auto max-w-sm rounded-xl border border-border bg-card/95 px-4 py-2.5 text-center text-xs font-medium text-foreground shadow-xl backdrop-blur-md sm:right-5 sm:bottom-5 sm:left-auto sm:mx-0 sm:max-w-none sm:text-left"
         >
           {toast}
         </div>

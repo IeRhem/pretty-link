@@ -2,6 +2,7 @@ import { parseSocialStats } from "@/components/studio/social-mockup-card"
 import {
   hexToTintRgba,
   resolveTabAccentColor,
+  resolveTabUrlForeground,
 } from "@/components/studio/web-mockup-card"
 import { embedUrlMetadataInImageBlob } from "@/lib/image-metadata"
 import { resolveAspectDimensions } from "@/lib/presets"
@@ -1397,6 +1398,7 @@ function drawWebTabShowcase(
   const pillY = navY + (navBarH - pillH) / 2
   const pillW = Math.max(80, fx + fw - navPadX - pillX)
   const pillR = Math.round(12 * uiScale)
+  const urlFgColor = resolveTabUrlForeground(accentColor, isDarkChrome)
 
   roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillR)
   ctx.fillStyle = hexToTintRgba(accentColor, isDarkChrome ? 0.18 : 0.1)
@@ -1415,7 +1417,7 @@ function drawWebTabShowcase(
   ctx.save()
   ctx.translate(lockX, lockY)
   ctx.scale(ls, ls)
-  ctx.strokeStyle = accentColor
+  ctx.strokeStyle = urlFgColor
   ctx.lineWidth = 2.4
   ctx.lineCap = "round"
   ctx.beginPath()
@@ -1425,7 +1427,7 @@ function drawWebTabShowcase(
   ctx.lineTo(16.5, 10)
   ctx.stroke()
   roundedRectPath(ctx, 4.5, 9.5, 15, 11.5, 3.2)
-  ctx.fillStyle = accentColor
+  ctx.fillStyle = urlFgColor
   ctx.fill()
   ctx.restore()
 
@@ -1436,7 +1438,7 @@ function drawWebTabShowcase(
   const as = arrowSize * 0.28
   ctx.save()
   ctx.globalAlpha = 0.7
-  ctx.strokeStyle = accentColor
+  ctx.strokeStyle = urlFgColor
   ctx.lineWidth = Math.max(1.2, 1.8 * uiScale)
   ctx.lineCap = "round"
   ctx.lineJoin = "round"
@@ -1457,7 +1459,7 @@ function drawWebTabShowcase(
     arrowCx - arrowSize / 2 - pillGap - urlStartX
   )
   ctx.font = `500 ${urlFontSize}px ${sansFont}`
-  ctx.fillStyle = accentColor
+  ctx.fillStyle = urlFgColor
   ctx.textAlign = "left"
   ctx.textBaseline = "middle"
   if ("letterSpacing" in ctx) {

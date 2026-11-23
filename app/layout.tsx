@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono, DM_Sans, Instrument_Sans } from "next/font/google"
 import "./globals.css"
 import { cn } from "@/lib/utils"
@@ -26,6 +26,12 @@ export const metadata: Metadata = {
   title: "PrettyLink — Studio-Grade Link & Social Showcases",
   description:
     "Turn any website URL or social media profile link into a clean, shareable visual card powered by shadcn UI.",
+}
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

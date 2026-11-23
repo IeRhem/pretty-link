@@ -9,6 +9,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconCopy,
+  IconLayoutSidebarLeftCollapse,
   IconLink,
   IconPhoto,
   IconPhotoUp,
@@ -78,6 +79,12 @@ const BORDER_OPTIONS: Array<{ id: BorderStyle; label: string }> = [
   { id: "round", label: "Round" },
 ]
 
+type UploadField =
+  | "customScreenshotUrl"
+  | "customFaviconUrl"
+  | "socialAvatarUrl"
+  | "socialCoverUrl"
+
 export function ControlSidebar({
   state,
   isFetching,
@@ -86,6 +93,8 @@ export function ControlSidebar({
   onFetchUrl,
   onOpenExport,
   onQuickCopy,
+  onCloseMobile,
+  closeButtonRef,
 }: {
   state: StudioState
   isFetching: boolean
@@ -94,6 +103,8 @@ export function ControlSidebar({
   onFetchUrl: (urlOverride?: string) => void
   onOpenExport: () => void
   onQuickCopy: () => void
+  onCloseMobile?: () => void
+  closeButtonRef?: React.RefObject<HTMLButtonElement | null>
 }) {
   const [frameSectionOpen, setFrameSectionOpen] = React.useState(true)
   const [posterSectionOpen, setPosterSectionOpen] = React.useState(true)
@@ -101,18 +112,26 @@ export function ControlSidebar({
   const faviconInputRef = React.useRef<HTMLInputElement>(null)
   const avatarInputRef = React.useRef<HTMLInputElement>(null)
   const coverInputRef = React.useRef<HTMLInputElement>(null)
+  const uploadRequestTokensRef = React.useRef<Record<UploadField, number>>({
+    customScreenshotUrl: 0,
+    customFaviconUrl: 0,
+    socialAvatarUrl: 0,
+    socialCoverUrl: 0,
+  })
+  const navIconsLabelId = React.useId()
+  const cornerIconLabelId = React.useId()
+  const headlineTextLabelId = React.useId()
+  const footerSignatureLabelId = React.useId()
 
   const handleDataUrlUpload = (
     file: File | undefined,
-    field:
-      | "customScreenshotUrl"
-      | "customFaviconUrl"
-      | "socialAvatarUrl"
-      | "socialCoverUrl"
+    field: UploadField
   ) => {
     if (!file || !file.type.startsWith("image/")) return
+    const token = ++uploadRequestTokensRef.current[field]
     const reader = new FileReader()
     reader.onload = () => {
+      if (uploadRequestTokensRef.current[field] !== token) return
       if (typeof reader.result === "string") {
         onChange({ [field]: reader.result } as Partial<StudioState>)
       }
@@ -121,9 +140,30 @@ export function ControlSidebar({
   }
 
   return (
-    <aside className="flex h-full w-full flex-col gap-3 md:w-[320px] md:shrink-0 lg:w-[332px]">
+    <aside className="flex min-h-0 w-full flex-1 flex-col gap-2.5 lg:h-full lg:w-[320px] lg:flex-initial lg:shrink-0 lg:gap-3 xl:w-[332px]">
+      {onCloseMobile && (
+        <div className="flex items-center justify-between border-b border-border/70 px-3.5 py-2.5 lg:hidden">
+          <span className="font-heading text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+            Studio Controls
+          </span>
+          <Button
+            ref={closeButtonRef}
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onCloseMobile}
+            aria-label="Close studio controls sidebar"
+            className="size-9 rounded-xl [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+          >
+            <IconLayoutSidebarLeftCollapse
+              className="size-4"
+              aria-hidden="true"
+            />
+          </Button>
+        </div>
+      )}
       {/* Top floating Web | Social mode tray matching uploaded mockup */}
-      <div className="rounded-2xl border border-border/80 bg-card p-1.5 shadow-sm">
+      <div className="mx-3 rounded-xl border border-border/80 bg-background/60 p-1 shadow-2xs lg:mx-0 lg:rounded-2xl lg:bg-card lg:p-1.5 lg:shadow-sm">
         <Tabs
           value={state.mode}
           onValueChange={(val) => onChange({ mode: val as StudioMode })}
@@ -146,8 +186,8 @@ export function ControlSidebar({
       </div>
 
       {/* Main controls card */}
-      <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border/80 bg-card shadow-sm">
-        <ScrollArea className="flex-1">
+      <div className="flex min-h-0 flex-1 flex-col lg:rounded-2xl lg:border lg:border-border/80 lg:bg-card lg:shadow-sm">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-4 p-3.5">
             {/* URL Input Row matching uploaded mockup */}
             <form
@@ -264,7 +304,7 @@ export function ControlSidebar({
                           type="button"
                           onClick={() => onChange({ webLayout: opt.id })}
                           className={cn(
-                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                            "rounded-lg px-0.5 py-1.5 text-[10px] font-medium transition-colors sm:text-[11px]",
                             state.webLayout === opt.id
                               ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
                               : "text-muted-foreground hover:text-foreground"
@@ -290,21 +330,37 @@ export function ControlSidebar({
                           { id: "minimal", label: "Min" },
                           { id: "none", label: "None" },
                         ] as Array<{ id: BrowserChromeStyle; label: string }>
-                      ).map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => onChange({ browserChrome: opt.id })}
-                          className={cn(
-                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
-                            state.browserChrome === opt.id
-                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
-                              : "text-muted-foreground hover:text-foreground"
-                          )}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
+                      ).map((opt) => {
+                        const isHeaderLayout = state.webLayout === "tab"
+                        const isDisabled =
+                          isHeaderLayout &&
+                          opt.id !== "chrome" &&
+                          opt.id !== "mobile"
+                        const isActive = isHeaderLayout
+                          ? opt.id ===
+                            (state.browserChrome === "mobile"
+                              ? "mobile"
+                              : "chrome")
+                          : state.browserChrome === opt.id
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            disabled={isDisabled}
+                            onClick={() => onChange({ browserChrome: opt.id })}
+                            className={cn(
+                              "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                              isActive
+                                ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                : isDisabled
+                                  ? "cursor-not-allowed text-muted-foreground opacity-40"
+                                  : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        )
+                      })}
                     </div>
                   </div>
 
@@ -428,17 +484,25 @@ export function ControlSidebar({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between px-0.5">
-                    <Label className="text-xs text-muted-foreground">
-                      Navigation Icons
-                    </Label>
-                    <Switch
-                      checked={state.showNavButtons}
-                      onCheckedChange={(checked) =>
-                        onChange({ showNavButtons: checked })
-                      }
-                    />
-                  </div>
+                  {(state.webLayout === "tab" ||
+                    state.browserChrome === "chrome" ||
+                    state.browserChrome === "mobile") && (
+                    <div className="flex items-center justify-between px-0.5">
+                      <Label
+                        id={navIconsLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
+                        Navigation Icons
+                      </Label>
+                      <Switch
+                        aria-labelledby={navIconsLabelId}
+                        checked={state.showNavButtons}
+                        onCheckedChange={(checked) =>
+                          onChange({ showNavButtons: checked })
+                        }
+                      />
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between px-0.5">
                     <Label className="text-xs text-muted-foreground">
@@ -529,7 +593,10 @@ export function ControlSidebar({
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            onClick={() => onChange({ customFaviconUrl: "" })}
+                            onClick={() => {
+                              uploadRequestTokensRef.current.customFaviconUrl += 1
+                              onChange({ customFaviconUrl: "" })
+                            }}
                             aria-label="Clear custom icon"
                           >
                             <IconTrash />
@@ -641,7 +708,7 @@ export function ControlSidebar({
                           type="button"
                           onClick={() => onChange({ socialCardStyle: opt.id })}
                           className={cn(
-                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                            "rounded-lg px-0.5 py-1.5 text-[10px] font-medium transition-colors sm:text-[11px]",
                             state.socialCardStyle === opt.id
                               ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
                               : "text-muted-foreground hover:text-foreground"
@@ -890,10 +957,14 @@ export function ControlSidebar({
                   {/* Corner Icon Watermark */}
                   <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">
+                      <Label
+                        id={cornerIconLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
                         Corner Icon Watermark
                       </Label>
                       <Switch
+                        aria-labelledby={cornerIconLabelId}
                         checked={state.showCornerIcon}
                         onCheckedChange={(checked) =>
                           onChange({ showCornerIcon: checked })
@@ -948,9 +1019,10 @@ export function ControlSidebar({
                               type="button"
                               variant="ghost"
                               size="icon-sm"
-                              onClick={() =>
+                              onClick={() => {
+                                uploadRequestTokensRef.current.customFaviconUrl += 1
                                 onChange({ customFaviconUrl: "" })
-                              }
+                              }}
                               aria-label="Clear custom icon"
                             >
                               <IconTrash />
@@ -964,10 +1036,14 @@ export function ControlSidebar({
                   {/* Headline Text */}
                   <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">
+                      <Label
+                        id={headlineTextLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
                         Headline Text
                       </Label>
                       <Switch
+                        aria-labelledby={headlineTextLabelId}
                         checked={state.showPosterHeader}
                         onCheckedChange={(checked) =>
                           onChange({ showPosterHeader: checked })
@@ -1086,10 +1162,14 @@ export function ControlSidebar({
                   {/* Footer Signature */}
                   <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">
+                      <Label
+                        id={footerSignatureLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
                         Footer Signature
                       </Label>
                       <Switch
+                        aria-labelledby={footerSignatureLabelId}
                         checked={state.showPosterFooter}
                         onCheckedChange={(checked) =>
                           onChange({ showPosterFooter: checked })

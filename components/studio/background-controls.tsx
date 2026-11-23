@@ -162,6 +162,7 @@ export function BackgroundControls({
   onChange: (patch: Partial<StudioState>) => void
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const patternIntensityLabelId = React.useId()
   const [unsplashQuery, setUnsplashQuery] = React.useState("")
   const [unsplashCategory, setUnsplashCategory] =
     React.useState<(typeof UNSPLASH_CATEGORIES)[number]>("All")
@@ -622,6 +623,7 @@ export function BackgroundControls({
                 <button
                   key={pat.id}
                   type="button"
+                  aria-pressed={active}
                   onClick={() => onChange({ bgPattern: pat.id })}
                   className={cn(
                     "flex flex-col items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-medium transition-colors",
@@ -640,12 +642,13 @@ export function BackgroundControls({
           {state.bgPattern !== "none" && (
             <div className="space-y-1 pt-0.5">
               <div className="flex justify-between text-[11px] text-muted-foreground">
-                <span>Intensity</span>
+                <span id={patternIntensityLabelId}>Intensity</span>
                 <span className="font-mono tabular-nums">
                   {state.bgPatternOpacity}%
                 </span>
               </div>
               <Slider
+                aria-labelledby={patternIntensityLabelId}
                 min={5}
                 max={60}
                 step={1}

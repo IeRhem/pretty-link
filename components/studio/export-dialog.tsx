@@ -164,7 +164,7 @@ export function ExportDialog({
           </div>
 
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Label htmlFor="export-filename" className="text-xs text-muted-foreground">
                 Filename
               </Label>

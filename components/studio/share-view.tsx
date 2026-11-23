@@ -54,11 +54,11 @@ export function ShareView() {
   }
 
   return (
-    <main className="bg-studio-grid flex min-h-screen flex-col items-center justify-between bg-background p-4 sm:p-8">
-      <header className="flex w-full max-w-4xl items-center justify-between">
+    <main className="bg-studio-grid flex min-h-dvh flex-col items-center justify-between bg-background p-3 sm:p-8">
+      <header className="flex w-full max-w-4xl items-center justify-between gap-2">
         <Link
           href="/"
-          className="flex items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 py-1.5 shadow-2xs"
+          className="flex shrink-0 items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 py-1.5 shadow-2xs"
         >
           <span className="flex size-6 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <IconLink className="size-3.5" stroke={2.2} />
@@ -66,16 +66,19 @@ export function ShareView() {
           <span className="font-heading text-sm font-semibold">PrettyLink</span>
         </Link>
 
-        <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
+        <Badge
+          variant="outline"
+          className="min-w-0 max-w-[55%] truncate font-mono text-xs text-muted-foreground"
+        >
           {formatDisplayUrl(state.url)}
         </Badge>
       </header>
 
-      <section className="my-6 flex w-full max-w-3xl flex-1 items-center justify-center">
+      <section className="my-4 flex min-h-[280px] w-full max-w-3xl flex-1 items-center justify-center sm:my-6">
         <MockupFrame state={state} maxWidthPx={580} maxHeightPx={560} />
       </section>
 
-      <footer className="flex flex-wrap items-center justify-center gap-3 rounded-2xl border border-border/80 bg-card/90 p-2.5 shadow-lg backdrop-blur-md">
+      <footer className="flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card/90 p-2.5 shadow-lg backdrop-blur-md sm:gap-3">
         {safeHref ? (
           <a
             href={safeHref}
