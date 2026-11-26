@@ -6,7 +6,7 @@ import {
   resolveTabUrlForeground,
 } from "@/components/studio/web-mockup-card"
 import { embedUrlMetadataInImageBlob } from "@/lib/image-metadata"
-import { resolveAspectDimensions } from "@/lib/presets"
+import { ASPECT_RATIOS, resolveAspectDimensions } from "@/lib/presets"
 import { generateQrMatrix } from "@/lib/qr"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import type {
@@ -16,6 +16,7 @@ import type {
   StudioState,
 } from "@/lib/studio-types"
 import { formatDisplayUrl, normalizeUrl, toImageProxyUrl } from "@/lib/url-utils"
+import { createZipBlob, type ZipFileEntry } from "@/lib/zip"
 
 export interface ExportOptions {
   format: ExportFormat
@@ -2781,4 +2782,71 @@ export async function copyStudioImageToClipboard(
       "image/png": blob,
     }),
   ])
+}
+
+export async function downloadBatchSocialKitZip(
+  state: StudioState,
+  options: {
+    ratioIds: string[]
+    format: ExportFormat
+    scale: ExportScale
+    baseFilename?: string
+    onProgress?: (completed: number, total: number) => void
+  }
+): Promise<number> {
+  const presets = ASPECT_RATIOS.filter(
+    (r) => r.id !== "custom" && options.ratioIds.includes(r.id)
+  )
+  if (presets.length === 0) {
+    throw new Error("Select at least one aspect ratio for the batch export.")
+  }
+
+  const cleanHost = formatDisplayUrl(state.url)
+    .replace(/[^a-z0-9.-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+  const baseName =
+    options.baseFilename?.trim() || `prettylink-${cleanHost || "shot"}`
+  const ext = options.format === "jpeg" ? "jpg" : options.format
+
+  const entries: ZipFileEntry[] = []
+  const total = presets.length
+  options.onProgress?.(0, total)
+
+  for (let i = 0; i < presets.length; i++) {
+    const preset = presets[i]!
+    const ratioState: StudioState = {
+      ...state,
+      aspectRatioId: preset.id,
+      customWidth: preset.width,
+      customHeight: preset.height,
+    }
+    const blob = await exportStudioBlob(ratioState, {
+      format: options.format,
+      scale: options.scale,
+    })
+    const buffer = await blob.arrayBuffer()
+    const outW = preset.width * options.scale
+    const outH = preset.height * options.scale
+    entries.push({
+      name: `${baseName}-${preset.id}-${outW}x${outH}.${ext}`,
+      data: new Uint8Array(buffer),
+    })
+    options.onProgress?.(i + 1, total)
+  }
+
+  const zipBlob = createZipBlob(entries)
+  const objectUrl = URL.createObjectURL(zipBlob)
+  try {
+    const a = document.createElement("a")
+    a.href = objectUrl
+    a.download = `${baseName}-social-kit.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  }
+
+  return entries.length
 }

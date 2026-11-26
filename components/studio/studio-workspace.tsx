@@ -10,7 +10,12 @@ import { copyStudioImageToClipboard } from "@/lib/export-canvas"
 import {
   ASPECT_RATIOS,
   BACKGROUND_PATTERNS,
+  computeStyleSwatch,
+  extractStylePresetPatch,
   GRADIENT_PRESETS,
+  loadCustomPresets,
+  saveCustomPresets,
+  type CustomPreset,
 } from "@/lib/presets"
 import { detectSocialPlatform, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import {
@@ -42,15 +47,26 @@ export function StudioWorkspace() {
   const [previewGeneration, setPreviewGeneration] = React.useState(0)
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copiedImage, setCopiedImage] = React.useState(false)
-  const [toast, setToast] = React.useState<string | null>(null)
+  const [toast, setToast] = React.useState<{
+    message: string
+    actionLabel?: string
+    onAction?: () => void
+  } | null>(null)
   const [isCompactViewport, setIsCompactViewport] = React.useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
+  const [customPresets, setCustomPresets] = React.useState<CustomPreset[]>([])
+  const [history, setHistory] = React.useState<{
+    past: StudioState[]
+    future: StudioState[]
+  }>({ past: [], future: [] })
 
   const drawerId = React.useId()
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchAbortRef = React.useRef<AbortController | null>(null)
   const lastFetchedUrlRef = React.useRef<string>("")
   const currentUrlRef = React.useRef<string>(state.url)
+  const stateRef = React.useRef<StudioState>(state)
+  const lastEditTimeRef = React.useRef<number>(0)
   const uploadResetTokenRef = React.useRef(0)
   const drawerRef = React.useRef<HTMLDivElement>(null)
   const stageWrapperRef = React.useRef<HTMLDivElement>(null)
@@ -64,33 +80,82 @@ export function StudioWorkspace() {
 
   React.useEffect(() => {
     currentUrlRef.current = state.url
-  }, [state.url])
+    stateRef.current = state
+  }, [state])
 
-  const notify = React.useCallback((message: string) => {
-    setToast(message)
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = setTimeout(() => setToast(null), 2600)
+  React.useEffect(() => {
+    const syncPresets = () => {
+      setCustomPresets(loadCustomPresets())
+    }
+    const rafId = requestAnimationFrame(syncPresets)
+    window.addEventListener("storage", syncPresets)
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener("storage", syncPresets)
+    }
   }, [])
+
+  const notify = React.useCallback(
+    (
+      message: string,
+      options?: { actionLabel?: string; onAction?: () => void }
+    ) => {
+      setToast({
+        message,
+        actionLabel: options?.actionLabel,
+        onAction: options?.onAction,
+      })
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      toastTimerRef.current = setTimeout(
+        () => setToast(null),
+        options?.actionLabel ? 5200 : 2600
+      )
+    },
+    []
+  )
+
+  const recordUndoSnapshot = React.useCallback(
+    (snapshot: StudioState, forceNewStep = false) => {
+      const now = Date.now()
+      const shouldCoalesce =
+        !forceNewStep && now - lastEditTimeRef.current < 400
+      lastEditTimeRef.current = now
+
+      setHistory((prev) => {
+        if (shouldCoalesce && prev.past.length > 0) {
+          return prev.future.length > 0 ? { ...prev, future: [] } : prev
+        }
+        const nextPast =
+          prev.past.length >= 50
+            ? [...prev.past.slice(prev.past.length - 49), snapshot]
+            : [...prev.past, snapshot]
+        return { past: nextPast, future: [] }
+      })
+    },
+    []
+  )
 
   const getUploadResetToken = React.useCallback(
     () => uploadResetTokenRef.current,
     []
   )
 
-  const updateState = React.useCallback((patch: Partial<StudioState>) => {
-    if (patch.customFaviconUrl !== undefined) {
-      setPreviewGeneration((g) => g + 1)
-    }
-    if (patch.url !== undefined) {
-      if (patch.url.trim() !== currentUrlRef.current.trim()) {
-        fetchAbortRef.current?.abort()
-        fetchAbortRef.current = null
-        lastFetchedUrlRef.current = ""
-        setIsFetching(false)
+  const updateState = React.useCallback(
+    (patch: Partial<StudioState>, options?: { forceHistoryStep?: boolean }) => {
+      if (patch.customFaviconUrl !== undefined) {
+        setPreviewGeneration((g) => g + 1)
       }
-      currentUrlRef.current = patch.url
-    }
-    setState((prev) => {
+      if (patch.url !== undefined) {
+        if (patch.url.trim() !== currentUrlRef.current.trim()) {
+          fetchAbortRef.current?.abort()
+          fetchAbortRef.current = null
+          lastFetchedUrlRef.current = ""
+          setIsFetching(false)
+        }
+        currentUrlRef.current = patch.url
+      }
+      recordUndoSnapshot(stateRef.current, options?.forceHistoryStep ?? false)
+      setState((prev) => {
       const next = { ...prev, ...patch }
       if (patch.url !== undefined && patch.url.trim() !== prev.url.trim()) {
         next.metadata = null
@@ -118,7 +183,47 @@ export function StudioWorkspace() {
       }
       return next
     })
-  }, [])
+  }, [recordUndoSnapshot])
+
+  const handleUndo = React.useCallback(() => {
+    if (history.past.length === 0) return
+    const previous = history.past[history.past.length - 1]!
+    const current = stateRef.current
+    lastEditTimeRef.current = 0
+    if (previous.url.trim() !== current.url.trim()) {
+      fetchAbortRef.current?.abort()
+      fetchAbortRef.current = null
+      lastFetchedUrlRef.current = ""
+      setIsFetching(false)
+      currentUrlRef.current = previous.url
+    }
+    setHistory((prev) => ({
+      past: prev.past.slice(0, -1),
+      future: [current, ...prev.future].slice(0, 50),
+    }))
+    setState(previous)
+    setPreviewGeneration((g) => g + 1)
+  }, [history.past])
+
+  const handleRedo = React.useCallback(() => {
+    if (history.future.length === 0) return
+    const nextState = history.future[0]!
+    const current = stateRef.current
+    lastEditTimeRef.current = 0
+    if (nextState.url.trim() !== current.url.trim()) {
+      fetchAbortRef.current?.abort()
+      fetchAbortRef.current = null
+      lastFetchedUrlRef.current = ""
+      setIsFetching(false)
+      currentUrlRef.current = nextState.url
+    }
+    setHistory((prev) => ({
+      past: [...prev.past, current].slice(-50),
+      future: prev.future.slice(1),
+    }))
+    setState(nextState)
+    setPreviewGeneration((g) => g + 1)
+  }, [history.future])
 
   const fetchPreview = React.useCallback(
     async (urlOverride?: string) => {
@@ -241,6 +346,7 @@ export function StudioWorkspace() {
         Math.floor(Math.random() * BACKGROUND_PATTERNS.length)
       ]!
 
+    recordUndoSnapshot(stateRef.current, true)
     setState((prev) => ({
       ...prev,
       aspectRatioId: randomRatio.id,
@@ -258,18 +364,20 @@ export function StudioWorkspace() {
       browserChrome: chromes[Math.floor(Math.random() * chromes.length)]!,
       chromeTheme: Math.random() > 0.45 ? "light" : "dark",
     }))
-  }, [])
+  }, [recordUndoSnapshot])
 
   const handleReset = React.useCallback(() => {
+    recordUndoSnapshot(stateRef.current, true)
     uploadResetTokenRef.current += 1
     fetchAbortRef.current?.abort()
     lastFetchedUrlRef.current = ""
+    currentUrlRef.current = DEFAULT_STUDIO_STATE.url
     setIsFetching(false)
     setPreviewGeneration((g) => g + 1)
     setState(DEFAULT_STUDIO_STATE)
     void fetchPreview(DEFAULT_STUDIO_STATE.url)
     notify("Reset studio to default showcase")
-  }, [fetchPreview, notify])
+  }, [fetchPreview, notify, recordUndoSnapshot])
 
   const handleToggleTheme = React.useCallback(() => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark")
@@ -277,10 +385,14 @@ export function StudioWorkspace() {
 
   const handleApplyTemplate = React.useCallback(
     (patch: Partial<StudioState>) => {
+      recordUndoSnapshot(stateRef.current, true)
       uploadResetTokenRef.current += 1
       fetchAbortRef.current?.abort()
       setIsFetching(false)
       setPreviewGeneration((g) => g + 1)
+      if (patch.url !== undefined) {
+        currentUrlRef.current = patch.url
+      }
       setState((prev) => ({
         ...prev,
         bgPattern: DEFAULT_STUDIO_STATE.bgPattern,
@@ -316,7 +428,53 @@ export function StudioWorkspace() {
         void fetchPreview(patch.url)
       }
     },
-    [fetchPreview]
+    [fetchPreview, recordUndoSnapshot]
+  )
+
+  const handleApplyCustomPreset = React.useCallback(
+    (preset: CustomPreset) => {
+      updateState(preset.patch, { forceHistoryStep: true })
+      notify(`Applied "${preset.name}" preset`)
+    },
+    [updateState, notify]
+  )
+
+  const handleSaveCustomPreset = React.useCallback(
+    (rawName: string) => {
+      const trimmed = rawName.trim().slice(0, 32)
+      if (!trimmed) return
+      const current = stateRef.current
+      const newPreset: CustomPreset = {
+        id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: trimmed,
+        mode: current.mode,
+        swatch: computeStyleSwatch(current),
+        createdAt: Date.now(),
+        patch: extractStylePresetPatch(current),
+      }
+      setCustomPresets((prev) => {
+        const next = [...prev, newPreset]
+        saveCustomPresets(next)
+        return next
+      })
+      notify(`Saved "${trimmed}" to your presets`)
+    },
+    [notify]
+  )
+
+  const handleDeleteCustomPreset = React.useCallback(
+    (id: string) => {
+      setCustomPresets((prev) => {
+        const target = prev.find((p) => p.id === id)
+        const next = prev.filter((p) => p.id !== id)
+        saveCustomPresets(next)
+        if (target) {
+          notify(`Deleted "${target.name}" preset`)
+        }
+        return next
+      })
+    },
+    [notify]
   )
 
   // Sync compact viewport breakpoint for the slide-over controls sidebar
@@ -391,8 +549,19 @@ export function StudioWorkspace() {
     }
   }, [isCompactViewport, mobileMenuOpen, closeMobileMenu])
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (Export, Quick Copy, Undo / Redo)
   React.useEffect(() => {
+    const isEditableElement = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false
+      const tag = el.tagName.toLowerCase()
+      return (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        el.isContentEditable
+      )
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
         e.preventDefault()
@@ -404,11 +573,128 @@ export function StudioWorkspace() {
       ) {
         e.preventDefault()
         void handleQuickCopy()
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        !isEditableElement(e.target) &&
+        e.key.toLowerCase() === "z"
+      ) {
+        e.preventDefault()
+        if (e.shiftKey) {
+          handleRedo()
+        } else {
+          handleUndo()
+        }
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        !isEditableElement(e.target) &&
+        e.key.toLowerCase() === "y"
+      ) {
+        e.preventDefault()
+        handleRedo()
       }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [handleQuickCopy])
+  }, [handleQuickCopy, handleUndo, handleRedo])
+
+  // Global clipboard image paste (Cmd/Ctrl+V) with mode-aware routing & target switch action
+  React.useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      let imageFile: File | null = null
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item && item.type.startsWith("image/")) {
+          imageFile = item.getAsFile()
+          if (imageFile) break
+        }
+      }
+      if (!imageFile) return
+
+      e.preventDefault()
+      const resetToken = uploadResetTokenRef.current
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (
+          uploadResetTokenRef.current !== resetToken ||
+          typeof reader.result !== "string"
+        ) {
+          return
+        }
+        const dataUrl = reader.result
+        const current = stateRef.current
+
+        if (current.mode === "web") {
+          if (current.webLayout === "tab") {
+            const prevFavicon = current.customFaviconUrl
+            updateState(
+              { customFaviconUrl: dataUrl },
+              { forceHistoryStep: true }
+            )
+            notify("Pasted image as header icon", {
+              actionLabel: "Use as Background",
+              onAction: () => {
+                updateState(
+                  {
+                    customFaviconUrl: prevFavicon,
+                    backgroundType: "image",
+                    backgroundImageUrl: dataUrl,
+                    unsplashPhotoId: "",
+                    unsplashPhotographer: "",
+                  },
+                  { forceHistoryStep: true }
+                )
+                notify("Applied pasted image as canvas background")
+              },
+            })
+          } else {
+            const prevScreenshot = current.customScreenshotUrl
+            updateState(
+              { customScreenshotUrl: dataUrl },
+              { forceHistoryStep: true }
+            )
+            notify("Pasted image as browser screenshot", {
+              actionLabel: "Use as Background",
+              onAction: () => {
+                updateState(
+                  {
+                    customScreenshotUrl: prevScreenshot,
+                    backgroundType: "image",
+                    backgroundImageUrl: dataUrl,
+                    unsplashPhotoId: "",
+                    unsplashPhotographer: "",
+                  },
+                  { forceHistoryStep: true }
+                )
+                notify("Applied pasted image as canvas background")
+              },
+            })
+          }
+        } else {
+          const prevCover = current.socialCoverUrl
+          updateState({ socialCoverUrl: dataUrl }, { forceHistoryStep: true })
+          notify("Pasted image as social cover", {
+            actionLabel: "Use as Avatar",
+            onAction: () => {
+              updateState(
+                {
+                  socialCoverUrl: prevCover,
+                  socialAvatarUrl: dataUrl,
+                },
+                { forceHistoryStep: true }
+              )
+              notify("Applied pasted image as social avatar")
+            },
+          })
+        }
+      }
+      reader.readAsDataURL(imageFile)
+    }
+
+    window.addEventListener("paste", onPaste)
+    return () => window.removeEventListener("paste", onPaste)
+  }, [updateState, notify])
 
   return (
     <main className="flex min-h-dvh w-full flex-col gap-3 bg-background pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] sm:p-3 lg:h-dvh lg:flex-row lg:gap-4 lg:overflow-hidden lg:p-4">
@@ -462,13 +748,24 @@ export function StudioWorkspace() {
           onReset={handleReset}
           onShareLink={handleShareLink}
           onApplyTemplate={handleApplyTemplate}
+          canUndo={history.past.length > 0}
+          canRedo={history.future.length > 0}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          customPresets={customPresets}
+          onApplyCustomPreset={handleApplyCustomPreset}
+          onSaveCustomPreset={handleSaveCustomPreset}
+          onDeleteCustomPreset={handleDeleteCustomPreset}
           onDropImage={(dataUrl) =>
-            updateState({
-              backgroundType: "image",
-              backgroundImageUrl: dataUrl,
-              unsplashPhotoId: "",
-              unsplashPhotographer: "",
-            })
+            updateState(
+              {
+                backgroundType: "image",
+                backgroundImageUrl: dataUrl,
+                unsplashPhotoId: "",
+                unsplashPhotographer: "",
+              },
+              { forceHistoryStep: true }
+            )
           }
         />
       </div>
@@ -477,17 +774,30 @@ export function StudioWorkspace() {
         open={exportOpen}
         onOpenChange={setExportOpen}
         state={state}
-        onNotify={notify}
+        onNotify={(msg) => notify(msg)}
       />
 
-      {/* Lightweight toast notification */}
+      {/* Lightweight toast notification with optional action */}
       {toast && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-50 mx-auto max-w-sm rounded-xl border border-border bg-card/95 px-4 py-2.5 text-center text-xs font-medium text-foreground shadow-xl backdrop-blur-md sm:right-5 sm:bottom-5 sm:left-auto sm:mx-0 sm:max-w-none sm:text-left"
+          className="fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-50 mx-auto flex max-w-sm items-center justify-between gap-3 rounded-xl border border-border bg-card/95 px-4 py-2.5 text-xs font-medium text-foreground shadow-xl backdrop-blur-md sm:right-5 sm:bottom-5 sm:left-auto sm:mx-0 sm:max-w-none"
         >
-          {toast}
+          <span>{toast.message}</span>
+          {toast.actionLabel && toast.onAction && (
+            <button
+              type="button"
+              onClick={() => {
+                const action = toast.onAction
+                setToast(null)
+                action?.()
+              }}
+              className="shrink-0 rounded-lg bg-primary/15 px-2.5 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/25"
+            >
+              {toast.actionLabel}
+            </button>
+          )}
         </div>
       )}
     </main>

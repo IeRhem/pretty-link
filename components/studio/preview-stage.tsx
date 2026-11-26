@@ -2,6 +2,8 @@
 
 import * as React from "react"
 import {
+  IconArrowBackUp,
+  IconArrowForwardUp,
   IconCheck,
   IconChevronDown,
   IconDice5,
@@ -9,10 +11,13 @@ import {
   IconLayoutSidebarLeftExpand,
   IconLink,
   IconMoon,
+  IconPlus,
   IconRestore,
   IconShare2,
   IconSparkles,
   IconSun,
+  IconTrash,
+  IconX,
   IconZoomIn,
   IconZoomOut,
 } from "@tabler/icons-react"
@@ -23,17 +28,24 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroupLabel,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuRadioItemIndicator,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { QUICK_TEMPLATES, resolveAspectDimensions } from "@/lib/presets"
+import {
+  QUICK_TEMPLATES,
+  resolveAspectDimensions,
+  type CustomPreset,
+} from "@/lib/presets"
 import type { StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
@@ -52,6 +64,14 @@ export function PreviewStage({
   onReset,
   onShareLink,
   onApplyTemplate,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
+  customPresets = [],
+  onApplyCustomPreset,
+  onSaveCustomPreset,
+  onDeleteCustomPreset,
   onDropImage,
 }: {
   state: StudioState
@@ -67,12 +87,52 @@ export function PreviewStage({
   onReset: () => void
   onShareLink: () => void
   onApplyTemplate: (patch: Partial<StudioState>) => void
+  canUndo?: boolean
+  canRedo?: boolean
+  onUndo?: () => void
+  onRedo?: () => void
+  customPresets?: CustomPreset[]
+  onApplyCustomPreset?: (preset: CustomPreset) => void
+  onSaveCustomPreset?: (name: string) => void
+  onDeleteCustomPreset?: (id: string) => void
   onDropImage: (dataUrl: string) => void
 }) {
   const [zoom, setZoom] = React.useState(1)
   const [dragging, setDragging] = React.useState(false)
   const [sharedCopied, setSharedCopied] = React.useState(false)
+  const [savingPreset, setSavingPreset] = React.useState(false)
+  const [presetName, setPresetName] = React.useState("")
+  const presetInputRef = React.useRef<HTMLInputElement>(null)
   const { width, height } = resolveAspectDimensions(state)
+
+  React.useEffect(() => {
+    if (savingPreset) {
+      requestAnimationFrame(() => {
+        presetInputRef.current?.focus()
+      })
+    }
+  }, [savingPreset])
+
+  const handleCommitSavePreset = (e?: React.FormEvent) => {
+    e?.preventDefault()
+    const trimmed = presetName.trim()
+    if (!trimmed) return
+    onSaveCustomPreset?.(trimmed)
+    setPresetName("")
+    setSavingPreset(false)
+  }
+
+  const isCustomPresetActive = (preset: CustomPreset) =>
+    state.mode === preset.mode &&
+    state.aspectRatioId === preset.patch.aspectRatioId &&
+    state.backgroundType === preset.patch.backgroundType &&
+    state.gradientFrom === preset.patch.gradientFrom &&
+    state.gradientTo === preset.patch.gradientTo &&
+    state.solidColor === preset.patch.solidColor &&
+    state.borderStyle === preset.patch.borderStyle &&
+    (!preset.patch.webLayout || state.webLayout === preset.patch.webLayout) &&
+    (!preset.patch.socialCardStyle ||
+      state.socialCardStyle === preset.patch.socialCardStyle)
 
   const isTemplateActive = (tpl: (typeof QUICK_TEMPLATES)[number]) =>
     state.mode === tpl.mode &&
@@ -84,6 +144,11 @@ export function PreviewStage({
       state.socialCardStyle === tpl.patch.socialCardStyle)
 
   const activeTemplate = QUICK_TEMPLATES.find(isTemplateActive) ?? null
+  const activeCustomPreset =
+    !activeTemplate
+      ? (customPresets.find(isCustomPresetActive) ?? null)
+      : null
+  const activePresetDisplay = activeTemplate ?? activeCustomPreset
 
   const handleShareClick = () => {
     onShareLink()
@@ -165,6 +230,50 @@ export function PreviewStage({
         </div>
 
         <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-card/90 p-1 shadow-2xs backdrop-blur-md">
+          {(onUndo || onRedo) && (
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={!canUndo}
+                      onClick={onUndo}
+                      aria-label="Undo last change"
+                      className="[@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:min-w-10"
+                    />
+                  }
+                >
+                  <IconArrowBackUp className="size-4" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipContent>Undo (⌘Z / Ctrl+Z)</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={!canRedo}
+                      onClick={onRedo}
+                      aria-label="Redo change"
+                      className="[@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:min-w-10"
+                    />
+                  }
+                >
+                  <IconArrowForwardUp className="size-4" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipContent>Redo (⌘⇧Z / Ctrl+Y)</TooltipContent>
+              </Tooltip>
+
+              <div className="mx-0.5 h-4 w-px bg-border" />
+            </>
+          )}
+
           <Tooltip>
             <TooltipTrigger
               render={
@@ -297,14 +406,52 @@ export function PreviewStage({
 
       {/* Bottom Quick-Template Dropdown (smaller screens / compact stage) & Inline Strip (wide desktop) */}
       <footer className="flex flex-wrap items-center justify-center gap-2">
+        {savingPreset && (
+          <form
+            onSubmit={handleCommitSavePreset}
+            className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-card/95 p-1.5 shadow-md backdrop-blur-md"
+          >
+            <Input
+              ref={presetInputRef}
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              placeholder="Preset name…"
+              maxLength={32}
+              aria-label="Custom preset name"
+              className="h-7 w-36 rounded-lg px-2 text-xs"
+            />
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!presetName.trim()}
+              className="h-7 rounded-lg px-2.5 text-[11px] font-semibold"
+            >
+              Save
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => {
+                setSavingPreset(false)
+                setPresetName("")
+              }}
+              aria-label="Cancel saving preset"
+              className="size-7 rounded-lg"
+            >
+              <IconX className="size-3.5" aria-hidden="true" />
+            </Button>
+          </form>
+        )}
+
         <div className="flex max-w-full items-center justify-center gap-2 @4xl/stage:hidden">
           <DropdownMenu>
             <DropdownMenuTrigger
               className="group inline-flex h-10 max-w-full min-w-0 items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md transition-colors hover:bg-muted/70 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-popup-open:bg-muted data-popup-open:ring-1 data-popup-open:ring-border [@media(pointer:coarse)]:min-h-11"
             >
-              {activeTemplate ? (
+              {activePresetDisplay ? (
                 <span
-                  style={{ backgroundImage: activeTemplate.swatch }}
+                  style={{ backgroundImage: activePresetDisplay.swatch }}
                   className="size-3 shrink-0 rounded-full ring-1 ring-white/20"
                 />
               ) : (
@@ -317,7 +464,7 @@ export function PreviewStage({
                 Presets
               </span>
               <span className="min-w-0 truncate font-medium">
-                {activeTemplate ? activeTemplate.name : "Choose…"}
+                {activePresetDisplay ? activePresetDisplay.name : "Choose…"}
               </span>
               <IconChevronDown
                 className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-data-popup-open:rotate-180"
@@ -329,9 +476,9 @@ export function PreviewStage({
               side="top"
               align="center"
               sideOffset={8}
-              className="max-h-[min(22rem,calc(100dvh-6rem))] w-[min(17.5rem,calc(100dvw-2rem))] overflow-y-auto p-1.5"
+              className="max-h-[min(24rem,calc(100dvh-6rem))] w-[min(18.5rem,calc(100dvw-2rem))] overflow-y-auto p-1.5"
             >
-              <DropdownMenuRadioGroup value={activeTemplate?.id ?? ""}>
+              <DropdownMenuRadioGroup value={activePresetDisplay?.id ?? ""}>
                 <DropdownMenuGroupLabel>Quick Presets</DropdownMenuGroupLabel>
                 {QUICK_TEMPLATES.map((tpl) => (
                   <DropdownMenuRadioItem
@@ -356,7 +503,74 @@ export function PreviewStage({
                     </span>
                   </DropdownMenuRadioItem>
                 ))}
+
+                {customPresets.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroupLabel>
+                      Saved Presets
+                    </DropdownMenuGroupLabel>
+                    {customPresets.map((preset) => (
+                      <div
+                        key={preset.id}
+                        className="flex items-center gap-1"
+                      >
+                        <DropdownMenuRadioItem
+                          value={preset.id}
+                          closeOnClick
+                          onClick={() => onApplyCustomPreset?.(preset)}
+                          className="min-h-9 flex-1 [@media(pointer:coarse)]:min-h-11"
+                        >
+                          <span className="flex w-4 shrink-0 items-center justify-center text-primary">
+                            <DropdownMenuRadioItemIndicator>
+                              <IconCheck
+                                className="size-3.5"
+                                aria-hidden="true"
+                              />
+                            </DropdownMenuRadioItemIndicator>
+                          </span>
+                          <span
+                            style={{ backgroundImage: preset.swatch }}
+                            className="size-3 shrink-0 rounded-full ring-1 ring-white/20"
+                          />
+                          <span className="min-w-0 flex-1 truncate">
+                            {preset.name}
+                          </span>
+                          <span className="ml-auto text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                            {preset.mode}
+                          </span>
+                        </DropdownMenuRadioItem>
+                        {onDeleteCustomPreset && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDeleteCustomPreset(preset.id)
+                            }}
+                            aria-label={`Delete ${preset.name} preset`}
+                            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <IconTrash className="size-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
               </DropdownMenuRadioGroup>
+
+              {onSaveCustomPreset && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setSavingPreset(true)}
+                    className="min-h-9 gap-2 font-medium text-primary [@media(pointer:coarse)]:min-h-11"
+                  >
+                    <IconPlus className="size-3.5" aria-hidden="true" />
+                    <span>Save Current Style as Preset…</span>
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -388,6 +602,56 @@ export function PreviewStage({
               </button>
             )
           })}
+
+          {customPresets.map((preset) => {
+            const isActive =
+              !activeTemplate && activeCustomPreset?.id === preset.id
+            return (
+              <div
+                key={preset.id}
+                className={cn(
+                  "group inline-flex shrink-0 items-center rounded-xl text-[11px] font-medium whitespace-nowrap transition-colors",
+                  isActive
+                    ? "bg-muted text-foreground ring-1 ring-border"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                )}
+              >
+                <button
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => onApplyCustomPreset?.(preset)}
+                  className="inline-flex items-center gap-1.5 py-1 pr-1 pl-2"
+                >
+                  <span
+                    style={{ backgroundImage: preset.swatch }}
+                    className="size-3 rounded-full ring-1 ring-white/20"
+                  />
+                  <span>{preset.name}</span>
+                </button>
+                {onDeleteCustomPreset && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteCustomPreset(preset.id)}
+                    aria-label={`Delete ${preset.name} preset`}
+                    className="mr-1 flex size-4 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
+                  >
+                    <IconX className="size-2.5" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+
+          {onSaveCustomPreset && !savingPreset && (
+            <button
+              type="button"
+              onClick={() => setSavingPreset(true)}
+              className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-dashed border-border/80 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
+            >
+              <IconPlus className="size-3" aria-hidden="true" />
+              <span>Save</span>
+            </button>
+          )}
         </div>
 
         {onOpenExport && (

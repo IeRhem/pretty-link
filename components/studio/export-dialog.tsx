@@ -5,6 +5,7 @@ import {
   IconCheck,
   IconCopy,
   IconDownload,
+  IconFileZip,
   IconLink,
 } from "@tabler/icons-react"
 import { Badge } from "@/components/ui/badge"
@@ -22,9 +23,14 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import {
   copyStudioImageToClipboard,
+  downloadBatchSocialKitZip,
   downloadStudioImage,
 } from "@/lib/export-canvas"
-import { resolveAspectDimensions } from "@/lib/presets"
+import {
+  ASPECT_RATIOS,
+  DEFAULT_BATCH_RATIO_IDS,
+  resolveAspectDimensions,
+} from "@/lib/presets"
 import { getQrByteLength, QR_MAX_BYTE_LENGTH } from "@/lib/qr"
 import type {
   ExportFormat,
@@ -53,8 +59,28 @@ export function ExportDialog({
   const [format, setFormat] = React.useState<ExportFormat>("png")
   const [scale, setScale] = React.useState<ExportScale>(2)
   const [filename, setFilename] = React.useState("")
-  const [busy, setBusy] = React.useState<"download" | "copy" | null>(null)
+  const [busy, setBusy] = React.useState<"download" | "copy" | "batch" | null>(
+    null
+  )
   const [copiedLink, setCopiedLink] = React.useState(false)
+  const [batchRatioIds, setBatchRatioIds] = React.useState<string[]>(
+    DEFAULT_BATCH_RATIO_IDS
+  )
+  const [batchProgress, setBatchProgress] = React.useState<{
+    done: number
+    total: number
+  } | null>(null)
+
+  const batchableRatios = React.useMemo(
+    () => ASPECT_RATIOS.filter((r) => r.id !== "custom"),
+    []
+  )
+
+  const toggleBatchRatio = (id: string) => {
+    setBatchRatioIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    )
+  }
 
   const { width, height } = resolveAspectDimensions(state)
   const qrEnabled = state.mode === "web" ? state.webShowQr : state.socialShowQr
@@ -96,6 +122,35 @@ export function ExportDialog({
       onNotify(err instanceof Error ? err.message : "Clipboard copy failed")
     } finally {
       setBusy(null)
+    }
+  }
+
+  const handleBatchDownload = async () => {
+    if (batchRatioIds.length === 0) {
+      onNotify("Select at least one aspect ratio for the Social Kit ZIP")
+      return
+    }
+    setBusy("batch")
+    setBatchProgress({ done: 0, total: batchRatioIds.length })
+    try {
+      const count = await downloadBatchSocialKitZip(state, {
+        ratioIds: batchRatioIds,
+        format,
+        scale,
+        baseFilename: filename.trim() || suggestedName,
+        onProgress: (done, total) => setBatchProgress({ done, total }),
+      })
+      onNotify(
+        `Exported Social Kit ZIP (${count} ${format.toUpperCase()} images at ${scale}×)`
+      )
+      onOpenChange(false)
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : "Failed to export Social Kit ZIP"
+      )
+    } finally {
+      setBusy(null)
+      setBatchProgress(null)
     }
   }
 
@@ -210,6 +265,84 @@ export function ExportDialog({
               placeholder={suggestedName}
               className="h-9 font-mono text-xs"
             />
+          </div>
+
+          <div className="space-y-2 rounded-xl border border-border/80 bg-muted/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <IconFileZip
+                  className="size-3.5 text-primary"
+                  aria-hidden="true"
+                />
+                <Label className="text-xs font-semibold text-foreground">
+                  Batch Social Kit (.zip)
+                </Label>
+                <Badge variant="outline" className="px-1.5 py-0 font-mono text-[10px]">
+                  {batchRatioIds.length}/{batchableRatios.length}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setBatchRatioIds(DEFAULT_BATCH_RATIO_IDS)}
+                  className="font-medium text-muted-foreground hover:text-foreground"
+                >
+                  Core 5
+                </button>
+                <span className="text-border">·</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBatchRatioIds(batchableRatios.map((r) => r.id))
+                  }
+                  className="font-medium text-muted-foreground hover:text-foreground"
+                >
+                  All {batchableRatios.length}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
+              {batchableRatios.map((ratio) => {
+                const selected = batchRatioIds.includes(ratio.id)
+                return (
+                  <button
+                    key={ratio.id}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => toggleBatchRatio(ratio.id)}
+                    className={cn(
+                      "flex flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors",
+                      selected
+                        ? "border-primary/70 bg-primary/15 text-foreground"
+                        : "border-border/70 bg-background/50 text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <span className="w-full truncate text-[11px] font-medium">
+                      {ratio.label}
+                    </span>
+                    <span className="font-mono text-[10px] opacity-75">
+                      {ratio.ratioLabel} · {ratio.width * scale}×
+                      {ratio.height * scale}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={busy !== null || batchRatioIds.length === 0}
+              onClick={handleBatchDownload}
+              className="mt-1 w-full font-semibold"
+            >
+              {busy === "batch" ? <Spinner /> : <IconFileZip />}
+              {busy === "batch" && batchProgress
+                ? `Rendering ${batchProgress.done}/${batchProgress.total}…`
+                : `Download Social Kit (.zip · ${batchRatioIds.length} ratios)`}
+            </Button>
           </div>
 
           {qrExceedsCapacity && (

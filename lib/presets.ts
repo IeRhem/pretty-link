@@ -2,6 +2,7 @@ import type {
   AspectRatioPreset,
   BackgroundPattern,
   GradientPreset,
+  StudioMode,
   StudioState,
   UnsplashPhoto,
 } from "@/lib/studio-types"
@@ -794,3 +795,132 @@ export const QUICK_TEMPLATES: QuickTemplate[] = [
     },
   },
 ]
+
+export const DEFAULT_BATCH_RATIO_IDS: string[] = [
+  "square-hd",
+  "twitter-16-9",
+  "og-card",
+  "instagram-4-5",
+  "story-9-16",
+]
+
+export interface CustomPreset {
+  id: string
+  name: string
+  mode: StudioMode
+  swatch: string
+  createdAt: number
+  patch: Partial<StudioState>
+}
+
+export const CUSTOM_PRESETS_STORAGE_KEY = "prettylink:custom-presets:v1"
+
+export function computeStyleSwatch(state: StudioState): string {
+  if (state.backgroundType === "none") {
+    return "linear-gradient(135deg, #27272A 0%, #71717A 100%)"
+  }
+  if (
+    state.backgroundType === "color" &&
+    state.colorFillMode === "solid" &&
+    state.solidColor
+  ) {
+    return `linear-gradient(135deg, ${state.solidColor} 0%, ${state.solidColor} 100%)`
+  }
+  const from = state.gradientFrom || "#4F46E5"
+  const via = state.gradientVia?.trim()
+  const to = state.gradientTo || "#06B6D4"
+  const angle = Number.isFinite(state.gradientAngle) ? state.gradientAngle : 135
+  return via
+    ? `linear-gradient(${angle}deg, ${from} 0%, ${via} 50%, ${to} 100%)`
+    : `linear-gradient(${angle}deg, ${from} 0%, ${to} 100%)`
+}
+
+/**
+ * Extracts style and layout properties for a custom preset while preserving
+ * the user's current target URL, fetched metadata, and custom uploaded assets.
+ */
+export function extractStylePresetPatch(
+  state: StudioState
+): Partial<StudioState> {
+  return {
+    mode: state.mode,
+    aspectRatioId: state.aspectRatioId,
+    customWidth: state.customWidth,
+    customHeight: state.customHeight,
+    backgroundType:
+      state.backgroundType === "image" ? "color" : state.backgroundType,
+    colorFillMode: state.colorFillMode,
+    gradientId: state.gradientId,
+    gradientFrom: state.gradientFrom,
+    gradientVia: state.gradientVia,
+    gradientTo: state.gradientTo,
+    gradientAngle: state.gradientAngle,
+    solidColor: state.solidColor,
+    noiseOverlay: state.noiseOverlay,
+    bgPattern: state.bgPattern,
+    bgPatternOpacity: state.bgPatternOpacity,
+    unsplashPhotoId: state.unsplashPhotoId,
+    unsplashPhotographer: state.unsplashPhotographer,
+    bgBlur: state.bgBlur,
+    bgDim: state.bgDim,
+    borderStyle: state.borderStyle,
+    webLayout: state.webLayout,
+    browserChrome: state.browserChrome,
+    chromeTheme: state.chromeTheme,
+    frameScale: state.frameScale,
+    frameOffsetX: state.frameOffsetX,
+    frameOffsetY: state.frameOffsetY,
+    frameShadow: state.frameShadow,
+    showNavButtons: state.showNavButtons,
+    webShowQr: state.webShowQr,
+    showCapturedFrom: state.showCapturedFrom,
+    tabAccentColor: state.tabAccentColor,
+    showCornerIcon: state.showCornerIcon,
+    cornerIconPosition: state.cornerIconPosition,
+    showPosterHeader: state.showPosterHeader,
+    posterHeadlineAlign: state.posterHeadlineAlign,
+    posterHeadlineSize: state.posterHeadlineSize,
+    showPosterFooter: state.showPosterFooter,
+    socialCardStyle: state.socialCardStyle,
+    socialCardTheme: state.socialCardTheme,
+    socialVerified: state.socialVerified,
+    socialShowQr: state.socialShowQr,
+  }
+}
+
+export function loadCustomPresets(): CustomPreset[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_PRESETS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is CustomPreset =>
+        Boolean(
+          item &&
+            typeof item === "object" &&
+            typeof item.id === "string" &&
+            typeof item.name === "string" &&
+            (item.mode === "web" || item.mode === "social") &&
+            typeof item.swatch === "string" &&
+            item.patch &&
+            typeof item.patch === "object"
+        )
+    )
+  } catch {
+    return []
+  }
+}
+
+export function saveCustomPresets(presets: CustomPreset[]): void {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(
+      CUSTOM_PRESETS_STORAGE_KEY,
+      JSON.stringify(presets)
+    )
+  } catch {
+    // Ignore storage quota errors
+  }
+}
