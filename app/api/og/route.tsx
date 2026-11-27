@@ -1,0 +1,447 @@
+import { ImageResponse } from "next/og"
+import { NextRequest } from "next/server"
+import { parseSocialStats } from "@/components/studio/social-mockup-card"
+import { resolveTabAccentColor } from "@/components/studio/web-mockup-card"
+import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
+import { DEFAULT_STUDIO_STATE, type StudioState } from "@/lib/studio-types"
+import { decodeShareState, formatDisplayUrl } from "@/lib/url-utils"
+
+export async function GET(req: NextRequest) {
+  const rawD = req.nextUrl.searchParams.get("d") ?? ""
+  const decoded = rawD ? decodeShareState(rawD) : null
+  const state: StudioState = decoded
+    ? { ...DEFAULT_STUDIO_STATE, ...decoded, metadata: null }
+    : DEFAULT_STUDIO_STATE
+
+  const displayUrl = formatDisplayUrl(state.url)
+  const accentColor = resolveTabAccentColor(state)
+  const isDarkChrome = state.chromeTheme === "dark"
+
+  const bgStyle =
+    state.backgroundType === "none"
+      ? "linear-gradient(135deg, #18181B 0%, #27272A 100%)"
+      : state.backgroundType === "color" && state.colorFillMode === "solid"
+        ? state.solidColor || "#4F46E5"
+        : state.gradientVia?.trim()
+          ? `linear-gradient(${state.gradientAngle}deg, ${state.gradientFrom} 0%, ${state.gradientVia} 50%, ${state.gradientTo} 100%)`
+          : `linear-gradient(${state.gradientAngle}deg, ${state.gradientFrom} 0%, ${state.gradientTo} 100%)`
+
+  const fontFamily =
+    state.fontStyle === "mono"
+      ? "monospace"
+      : state.fontStyle === "editorial"
+        ? "Georgia, serif"
+        : "sans-serif"
+
+  const hasCallout =
+    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
+  const headlineText = state.showPosterHeader
+    ? state.posterHeadline.replace(/\n+/g, " ").trim()
+    : ""
+  const accentText = state.showPosterHeader
+    ? state.posterAccentText.trim()
+    : ""
+  const platform =
+    SOCIAL_PLATFORMS[state.socialPlatform] ?? SOCIAL_PLATFORMS.custom
+  const stats = parseSocialStats(state.socialMetrics)
+
+  return new ImageResponse(
+    (
+      <div
+        style={{
+          width: "1200px",
+          height: "630px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: bgStyle,
+          padding: "44px 64px",
+          fontFamily,
+          color: "#FFFFFF",
+          position: "relative",
+        }}
+      >
+        {/* Top Row: PrettyLink Badge + Optional Callout Pill */}
+        <div
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              background: "rgba(9, 9, 11, 0.55)",
+              border: "1px solid rgba(255, 255, 255, 0.18)",
+              borderRadius: "999px",
+              padding: "8px 16px",
+              fontSize: "18px",
+              fontWeight: 700,
+            }}
+          >
+            <div
+              style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "999px",
+                background: accentColor,
+              }}
+            />
+            <span>PrettyLink</span>
+          </div>
+
+          {hasCallout && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                background: "rgba(9, 9, 11, 0.85)",
+                border: "1px solid rgba(255, 255, 255, 0.22)",
+                borderRadius: "999px",
+                padding: "8px 18px",
+                fontSize: "18px",
+                fontWeight: 600,
+              }}
+            >
+              <div
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "999px",
+                  background: accentColor,
+                }}
+              />
+              <span>{state.calloutText.trim()}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Optional Headline Overlay */}
+        {headlineText ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "center",
+              gap: "12px",
+              fontSize: "44px",
+              fontWeight: 700,
+              letterSpacing: "-0.03em",
+              textAlign: "center",
+              maxWidth: "980px",
+            }}
+          >
+            <span>{headlineText}</span>
+            {accentText ? (
+              <span style={{ color: "rgba(255, 255, 255, 0.55)" }}>
+                {accentText}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Center Mockup Card */}
+        {state.mode === "social" ? (
+          <div
+            style={{
+              width: "760px",
+              display: "flex",
+              flexDirection: "column",
+              background:
+                state.socialCardTheme === "dark" ? "#111115" : "#FFFFFF",
+              color:
+                state.socialCardTheme === "dark" ? "#FAFAFA" : "#09090B",
+              borderRadius: "32px",
+              padding: "32px 36px",
+              boxShadow: "0 28px 64px rgba(0, 0, 0, 0.38)",
+              border: "1px solid rgba(255, 255, 255, 0.16)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "20px",
+                }}
+              >
+                <div
+                  style={{
+                    width: "76px",
+                    height: "76px",
+                    borderRadius: "999px",
+                    background: platform.accent,
+                    color: "#FFFFFF",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "34px",
+                    fontWeight: 700,
+                  }}
+                >
+                  {(state.socialDisplayName || "O").charAt(0).toUpperCase()}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "4px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      fontSize: "30px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>{state.socialDisplayName || "Olivia Rhye"}</span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "19px",
+                      opacity: 0.65,
+                    }}
+                  >
+                    {state.socialHandle || "@Oliviar_"} · {platform.shortLabel}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: platform.accent,
+                  color: "#FFFFFF",
+                  borderRadius: "999px",
+                  padding: "12px 26px",
+                  fontSize: "18px",
+                  fontWeight: 700,
+                }}
+              >
+                {state.socialCtaLabel || platform.defaultCta}
+              </div>
+            </div>
+
+            {state.socialBio ? (
+              <div
+                style={{
+                  marginTop: "18px",
+                  fontSize: "20px",
+                  lineHeight: 1.4,
+                  opacity: 0.82,
+                }}
+              >
+                {state.socialBio.slice(0, 140)}
+              </div>
+            ) : null}
+
+            {stats.length > 0 ? (
+              <div
+                style={{
+                  marginTop: "22px",
+                  paddingTop: "18px",
+                  borderTop:
+                    state.socialCardTheme === "dark"
+                      ? "1px solid rgba(255, 255, 255, 0.1)"
+                      : "1px solid rgba(9, 9, 11, 0.1)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-around",
+                  width: "100%",
+                }}
+              >
+                {stats.map((stat, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: "24px", fontWeight: 700 }}>
+                      {stat.value}
+                    </span>
+                    <span style={{ fontSize: "15px", opacity: 0.6 }}>
+                      {stat.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div
+            style={{
+              width: "860px",
+              display: "flex",
+              flexDirection: "column",
+              background: isDarkChrome ? "#18181B" : "#FFFFFF",
+              color: isDarkChrome ? "#F4F4F5" : "#18181B",
+              borderRadius: "28px",
+              overflow: "hidden",
+              boxShadow: "0 28px 64px rgba(0, 0, 0, 0.38)",
+              border: "1px solid rgba(255, 255, 255, 0.18)",
+            }}
+          >
+            {/* Top Browser Tab Bar */}
+            <div
+              style={{
+                width: "100%",
+                height: "54px",
+                background: "#121216",
+                display: "flex",
+                alignItems: "center",
+                padding: "0 22px",
+                gap: "12px",
+              }}
+            >
+              <div style={{ display: "flex", gap: "8px" }}>
+                <div
+                  style={{
+                    width: "13px",
+                    height: "13px",
+                    borderRadius: "999px",
+                    background: "#FF5F57",
+                  }}
+                />
+                <div
+                  style={{
+                    width: "13px",
+                    height: "13px",
+                    borderRadius: "999px",
+                    background: "#FEBC2E",
+                  }}
+                />
+                <div
+                  style={{
+                    width: "13px",
+                    height: "13px",
+                    borderRadius: "999px",
+                    background: "#28C840",
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  marginLeft: "14px",
+                  background: isDarkChrome ? "#18181B" : "#FFFFFF",
+                  color: isDarkChrome ? "#F4F4F5" : "#18181B",
+                  padding: "8px 20px",
+                  borderTopLeftRadius: "12px",
+                  borderTopRightRadius: "12px",
+                  fontSize: "16px",
+                  fontWeight: 600,
+                  marginTop: "10px",
+                }}
+              >
+                {state.tabTitle.trim() || displayUrl}
+              </div>
+            </div>
+
+            {/* Browser Address Bar & Preview Body */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                padding: "24px 28px 32px",
+                gap: "22px",
+              }}
+            >
+              <div
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  background: isDarkChrome
+                    ? "rgba(255, 255, 255, 0.08)"
+                    : "rgba(9, 9, 11, 0.05)",
+                  border: `2px solid ${accentColor}`,
+                  borderRadius: "16px",
+                  padding: "14px 20px",
+                  fontSize: "22px",
+                  fontWeight: 600,
+                }}
+              >
+                <div
+                  style={{
+                    width: "14px",
+                    height: "14px",
+                    borderRadius: "999px",
+                    background: accentColor,
+                  }}
+                />
+                <span>https://{displayUrl}</span>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                  padding: "8px 4px 0",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "32px",
+                    fontWeight: 700,
+                    letterSpacing: "-0.02em",
+                  }}
+                >
+                  {state.tabTitle.trim() || displayUrl}
+                </div>
+                <div
+                  style={{
+                    fontSize: "18px",
+                    opacity: 0.65,
+                  }}
+                >
+                  Interactive link showcase · {displayUrl}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Footer Row */}
+        <div
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "17px",
+            fontWeight: 600,
+            opacity: 0.88,
+          }}
+        >
+          {state.showPosterFooter && state.posterFooterTitle.trim()
+            ? `${state.posterFooterTitle.trim()}${state.posterFooterSubtitle.trim() ? ` · ${state.posterFooterSubtitle.trim()}` : ""}`
+            : displayUrl}
+        </div>
+      </div>
+    ),
+    {
+      width: 1200,
+      height: 630,
+    }
+  )
+}

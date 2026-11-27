@@ -175,7 +175,7 @@ export function ExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-md sm:p-6">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <DialogTitle>Export PrettyLink</DialogTitle>

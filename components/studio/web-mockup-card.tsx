@@ -14,6 +14,7 @@ import {
   IconX,
 } from "@tabler/icons-react"
 import { QrCodeSvg } from "@/components/studio/qr-code-svg"
+import { getFontStyleCssFamily } from "@/lib/presets"
 import type { StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl, normalizeUrl, validatePublicUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
@@ -360,38 +361,28 @@ export function PosterOverlays({
     previewGeneration
   )
   const showWebQr = state.mode === "web" && state.webShowQr
-  const showCapturedFrom = state.mode === "web" && state.showCapturedFrom
+  const hasCalloutBadge =
+    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
   const hasAnyOverlay =
     state.showCornerIcon ||
+    hasCalloutBadge ||
     state.showPosterHeader ||
     state.showPosterFooter ||
-    showWebQr ||
-    showCapturedFrom
+    showWebQr
   if (!hasAnyOverlay) return null
 
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const accentColor = resolveTabAccentColor(state)
+  const headingFontFamily = getFontStyleCssFamily(state.fontStyle)
   const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
   const qrSize = Math.round(54 * scaleFactor)
-  const activeMetadata =
-    state.metadata &&
-    (!state.metadata.requestedUrl ||
-      normalizeUrl(state.metadata.requestedUrl) === normalizeUrl(state.url))
-      ? state.metadata
-      : null
-  const domainLabel = activeMetadata?.domain || formatDisplayUrl(state.url)
 
   const cornerSize = Math.round(46 * scaleFactor)
   const headlineScale = (state.posterHeadlineSize ?? 100) / 100
   const headlineFontSize = Math.round(42 * scaleFactor * headlineScale)
   const headlineLines = state.posterHeadline.split("\n")
   const hasAccentText = Boolean(state.posterAccentText.trim())
-  const footerOffset = getPosterFooterStackOffset(
-    state,
-    scaleFactor,
-    logicalWidth
-  )
   const hasFooterTitle = Boolean(state.posterFooterTitle.trim())
   const hasFooterSubtitle = Boolean(state.posterFooterSubtitle.trim())
   const hasVisibleFooter =
@@ -447,6 +438,48 @@ export function PosterOverlays({
         </div>
       )}
 
+      {hasCalloutBadge && (
+        <div
+          style={{
+            top:
+              state.showCornerIcon &&
+              state.cornerIconPosition === state.calloutPosition
+                ? `calc(5.5% + ${cornerSize + Math.round(8 * scaleFactor)}px)`
+                : "5.5%",
+            ...(state.calloutPosition === "top-center"
+              ? { left: "50%", transform: "translateX(-50%)" }
+              : state.calloutPosition === "top-right"
+                ? { right: "7.5%" }
+                : { left: "7.5%" }),
+            height: `${Math.round(26 * scaleFactor)}px`,
+            paddingLeft: `${Math.round(9 * scaleFactor)}px`,
+            paddingRight: `${Math.round(11 * scaleFactor)}px`,
+            gap: `${Math.round(6 * scaleFactor)}px`,
+            fontFamily: headingFontFamily,
+          }}
+          className="absolute z-20 flex max-w-[78%] items-center rounded-full bg-zinc-950/88 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-md"
+        >
+          <span
+            style={{
+              width: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
+              height: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
+              backgroundColor: accentColor,
+              boxShadow: `0 0 ${Math.round(8 * scaleFactor)}px ${accentColor}`,
+            }}
+            className="shrink-0 rounded-full"
+          />
+          <span
+            style={{
+              fontSize: `${Math.round(11 * scaleFactor)}px`,
+              letterSpacing: "0.02em",
+            }}
+            className="truncate font-semibold"
+          >
+            {state.calloutText.trim()}
+          </span>
+        </div>
+      )}
+
       {state.showPosterHeader && (
         <div
           style={{
@@ -458,6 +491,7 @@ export function PosterOverlays({
             lineHeight: 1.08,
             letterSpacing: "-0.03em",
             fontWeight: 500,
+            fontFamily: headingFontFamily,
           }}
           className="absolute z-0 font-heading text-white"
         >
@@ -478,116 +512,41 @@ export function PosterOverlays({
         </div>
       )}
 
-      {(hasVisibleFooter || showCapturedFrom) && (
+      {hasVisibleFooter && (
         <div
-          style={{
-            bottom: "4.5%",
-            gap:
-              hasVisibleFooter && showCapturedFrom
-                ? `${Math.round(10 * scaleFactor)}px`
-                : undefined,
-          }}
+          style={{ bottom: "4.5%" }}
           className="absolute inset-x-0 z-20 flex flex-col items-center"
         >
-          {showCapturedFrom && (
-            <div
-              style={{
-                ...(footerOffset > 0 && showWebQr
-                  ? { alignSelf: "flex-start", marginLeft: "4.5%" }
-                  : undefined),
-                maxWidth: showWebQr
-                  ? footerOffset > 0
-                    ? "72%"
-                    : "64%"
-                  : "86%",
-                height: `${Math.round(30 * scaleFactor)}px`,
-                paddingLeft: `${Math.round(8 * scaleFactor)}px`,
-                paddingRight: `${Math.round(12 * scaleFactor)}px`,
-                gap: `${Math.round(6 * scaleFactor)}px`,
-              }}
-              className="flex items-center rounded-full bg-zinc-950/90 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-md"
-            >
-              {activeFavicon ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={`${previewGeneration}-${activeFavicon}`}
-                  src={activeFavicon}
-                  alt=""
-                  onError={() => markFaviconFailed(activeFavicon)}
-                  style={{
-                    width: `${Math.round(16 * scaleFactor)}px`,
-                    height: `${Math.round(16 * scaleFactor)}px`,
-                  }}
-                  className="shrink-0 rounded-full object-contain"
-                />
-              ) : (
-                <BrandMarkSvg
-                  accentColor={accentColor}
-                  style={{
-                    width: `${Math.round(16 * scaleFactor)}px`,
-                    height: `${Math.round(16 * scaleFactor)}px`,
-                  }}
-                  className="shrink-0"
-                />
-              )}
-              <span
+          <div className="flex max-w-[84%] flex-col items-center text-center">
+            {hasFooterTitle && (
+              <div
+                style={{
+                  fontSize: `${Math.round(14 * scaleFactor)}px`,
+                  lineHeight: 1.25,
+                  letterSpacing: "0.06em",
+                  fontFamily: headingFontFamily,
+                }}
+                className="font-heading font-bold text-white"
+              >
+                {state.posterFooterTitle}
+              </div>
+            )}
+            {hasFooterSubtitle && (
+              <div
                 style={{
                   fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-                  color: "rgba(255, 255, 255, 0.65)",
+                  lineHeight: 1.25,
+                  marginTop: hasFooterTitle
+                    ? `${Math.round(2 * scaleFactor)}px`
+                    : undefined,
+                  color: "rgba(255, 255, 255, 0.75)",
                 }}
-                className="shrink-0 font-medium whitespace-nowrap"
+                className="font-medium"
               >
-                Captured from
-              </span>
-              <span
-                style={{ fontSize: `${Math.round(11 * scaleFactor)}px` }}
-                className="min-w-0 truncate font-semibold"
-              >
-                {domainLabel}
-              </span>
-              <IconArrowUpRight
-                style={{
-                  width: `${Math.round(12 * scaleFactor)}px`,
-                  height: `${Math.round(12 * scaleFactor)}px`,
-                  opacity: 0.75,
-                }}
-                className="shrink-0"
-                stroke={2.1}
-              />
-            </div>
-          )}
-
-          {hasVisibleFooter && (
-            <div className="flex max-w-[84%] flex-col items-center text-center">
-              {hasFooterTitle && (
-                <div
-                  style={{
-                    fontSize: `${Math.round(14 * scaleFactor)}px`,
-                    lineHeight: 1.25,
-                    letterSpacing: "0.06em",
-                  }}
-                  className="font-heading font-bold text-white"
-                >
-                  {state.posterFooterTitle}
-                </div>
-              )}
-              {hasFooterSubtitle && (
-                <div
-                  style={{
-                    fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-                    lineHeight: 1.25,
-                    marginTop: hasFooterTitle
-                      ? `${Math.round(2 * scaleFactor)}px`
-                      : undefined,
-                    color: "rgba(255, 255, 255, 0.75)",
-                  }}
-                  className="font-medium"
-                >
-                  {state.posterFooterSubtitle}
-                </div>
-              )}
-            </div>
-          )}
+                {state.posterFooterSubtitle}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   IconBan,
   IconBrandUnsplash,
+  IconColorPicker,
   IconPalette,
   IconPhotoPlus,
   IconSearch,
@@ -15,7 +16,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
+import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { extractBrandPaletteFromState } from "@/lib/brand-palette"
 import {
   BACKGROUND_PATTERNS,
   CURATED_UNSPLASH_PHOTOS,
@@ -173,6 +176,36 @@ export function BackgroundControls({
     CURATED_UNSPLASH_PHOTOS
   )
   const [loadingPhotos, setLoadingPhotos] = React.useState(false)
+  const [matchingBrand, setMatchingBrand] = React.useState(false)
+
+  const hasBrandSource = Boolean(
+    state.customFaviconUrl ||
+      state.metadata?.faviconUrl ||
+      state.metadata?.themeColor ||
+      state.customScreenshotUrl ||
+      state.metadata?.ogImageUrl ||
+      state.socialAvatarUrl ||
+      state.metadata?.avatarUrl
+  )
+
+  const handleMatchBrandColors = async () => {
+    setMatchingBrand(true)
+    try {
+      const palette = await extractBrandPaletteFromState(state)
+      if (!palette) return
+      onChange({
+        backgroundType: "color",
+        gradientId: "brand",
+        gradientFrom: palette.gradientFrom,
+        gradientVia: palette.gradientVia,
+        gradientTo: palette.gradientTo,
+        solidColor: palette.solidColor,
+        tabAccentColor: palette.tabAccentColor,
+      })
+    } finally {
+      setMatchingBrand(false)
+    }
+  }
 
   React.useEffect(() => {
     if (state.backgroundType !== "unsplash") return
@@ -412,6 +445,22 @@ export function BackgroundControls({
               onCheckedChange={(checked) => onChange({ noiseOverlay: checked })}
             />
           </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={matchingBrand || !hasBrandSource}
+            onClick={() => void handleMatchBrandColors()}
+            className="h-8 w-full gap-1.5 rounded-lg text-xs font-medium"
+          >
+            {matchingBrand ? (
+              <Spinner />
+            ) : (
+              <IconColorPicker className="size-3.5 text-primary" />
+            )}
+            <span>Match Brand Colors</span>
+          </Button>
         </div>
       )}
 

@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react"
 import { QrCodeSvg } from "@/components/studio/qr-code-svg"
 import { SocialPlatformIcon } from "@/components/studio/social-platform-icon"
+import { getFontStyleCssFamily } from "@/lib/presets"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import type { StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl, normalizeUrl, toImageProxyUrl } from "@/lib/url-utils"
@@ -134,6 +135,7 @@ export function SocialMockupCard({
 
   const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
   const displayUrl = formatDisplayUrl(state.url)
+  const headingFontFamily = getFontStyleCssFamily(state.fontStyle)
   const initial = (state.socialDisplayName || "O").charAt(0).toUpperCase()
   const stats = React.useMemo(
     () => parseSocialStats(state.socialMetrics),
@@ -210,7 +212,10 @@ export function SocialMockupCard({
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="truncate font-heading text-lg font-bold tracking-tight">
+              <span
+                style={{ fontFamily: headingFontFamily }}
+                className="truncate font-heading text-lg font-bold tracking-tight"
+              >
                 {state.socialDisplayName || "Olivia Rhye"}
               </span>
               {state.socialVerified && (
@@ -297,7 +302,10 @@ export function SocialMockupCard({
             <div className="mt-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <h2 className="truncate font-heading text-[17px] leading-tight font-bold tracking-tight text-white">
+                  <h2
+                    style={{ fontFamily: headingFontFamily }}
+                    className="truncate font-heading text-[17px] leading-tight font-bold tracking-tight text-white"
+                  >
                     {state.socialDisplayName || "Olivia Rhye"}
                   </h2>
                   {state.socialVerified && (
@@ -428,7 +436,10 @@ export function SocialMockupCard({
         <div className="mt-2 px-1.5">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate font-heading text-[17px] leading-tight font-bold tracking-tight">
+              <h2
+                style={{ fontFamily: headingFontFamily }}
+                className="truncate font-heading text-[17px] leading-tight font-bold tracking-tight"
+              >
                 {state.socialDisplayName || "Olivia Rhye"}
               </h2>
               {state.socialVerified && (

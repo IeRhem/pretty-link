@@ -6,6 +6,7 @@ import { useTheme } from "next-themes"
 import { ControlSidebar } from "@/components/studio/control-sidebar"
 import { ExportDialog } from "@/components/studio/export-dialog"
 import { PreviewStage } from "@/components/studio/preview-stage"
+import { extractBrandPaletteFromState } from "@/lib/brand-palette"
 import { copyStudioImageToClipboard } from "@/lib/export-canvas"
 import {
   ASPECT_RATIOS,
@@ -68,6 +69,11 @@ export function StudioWorkspace() {
   const stateRef = React.useRef<StudioState>(state)
   const lastEditTimeRef = React.useRef<number>(0)
   const uploadResetTokenRef = React.useRef(0)
+  const assetMutationTokenRef = React.useRef({
+    screenshot: 0,
+    avatar: 0,
+    cover: 0,
+  })
   const drawerRef = React.useRef<HTMLDivElement>(null)
   const stageWrapperRef = React.useRef<HTMLDivElement>(null)
   const menuTriggerRef = React.useRef<HTMLButtonElement>(null)
@@ -145,6 +151,15 @@ export function StudioWorkspace() {
       if (patch.customFaviconUrl !== undefined) {
         setPreviewGeneration((g) => g + 1)
       }
+      if (patch.customScreenshotUrl !== undefined) {
+        assetMutationTokenRef.current.screenshot += 1
+      }
+      if (patch.socialAvatarUrl !== undefined) {
+        assetMutationTokenRef.current.avatar += 1
+      }
+      if (patch.socialCoverUrl !== undefined) {
+        assetMutationTokenRef.current.cover += 1
+      }
       if (patch.url !== undefined) {
         if (patch.url.trim() !== currentUrlRef.current.trim()) {
           fetchAbortRef.current?.abort()
@@ -190,12 +205,25 @@ export function StudioWorkspace() {
     const previous = history.past[history.past.length - 1]!
     const current = stateRef.current
     lastEditTimeRef.current = 0
-    if (previous.url.trim() !== current.url.trim()) {
-      fetchAbortRef.current?.abort()
-      fetchAbortRef.current = null
+    uploadResetTokenRef.current += 1
+    assetMutationTokenRef.current.screenshot += 1
+    assetMutationTokenRef.current.avatar += 1
+    assetMutationTokenRef.current.cover += 1
+    fetchAbortRef.current?.abort()
+    fetchAbortRef.current = null
+    setIsFetching(false)
+    currentUrlRef.current = previous.url
+    const prevTrimmed = previous.url.trim()
+    const hasRestoredPreviewOrAssets = Boolean(
+      previous.metadata ||
+        previous.customScreenshotUrl ||
+        previous.socialAvatarUrl ||
+        previous.socialCoverUrl
+    )
+    if (hasRestoredPreviewOrAssets || prevTrimmed === current.url.trim()) {
+      lastFetchedUrlRef.current = prevTrimmed
+    } else {
       lastFetchedUrlRef.current = ""
-      setIsFetching(false)
-      currentUrlRef.current = previous.url
     }
     setHistory((prev) => ({
       past: prev.past.slice(0, -1),
@@ -210,12 +238,25 @@ export function StudioWorkspace() {
     const nextState = history.future[0]!
     const current = stateRef.current
     lastEditTimeRef.current = 0
-    if (nextState.url.trim() !== current.url.trim()) {
-      fetchAbortRef.current?.abort()
-      fetchAbortRef.current = null
+    uploadResetTokenRef.current += 1
+    assetMutationTokenRef.current.screenshot += 1
+    assetMutationTokenRef.current.avatar += 1
+    assetMutationTokenRef.current.cover += 1
+    fetchAbortRef.current?.abort()
+    fetchAbortRef.current = null
+    setIsFetching(false)
+    currentUrlRef.current = nextState.url
+    const nextTrimmed = nextState.url.trim()
+    const hasRestoredPreviewOrAssets = Boolean(
+      nextState.metadata ||
+        nextState.customScreenshotUrl ||
+        nextState.socialAvatarUrl ||
+        nextState.socialCoverUrl
+    )
+    if (hasRestoredPreviewOrAssets || nextTrimmed === current.url.trim()) {
+      lastFetchedUrlRef.current = nextTrimmed
+    } else {
       lastFetchedUrlRef.current = ""
-      setIsFetching(false)
-      currentUrlRef.current = nextState.url
     }
     setHistory((prev) => ({
       past: [...prev.past, current].slice(-50),
@@ -234,6 +275,7 @@ export function StudioWorkspace() {
       fetchAbortRef.current?.abort()
       const controller = new AbortController()
       fetchAbortRef.current = controller
+      const startAssetTokens = { ...assetMutationTokenRef.current }
 
       setIsFetching(true)
       try {
@@ -259,22 +301,64 @@ export function StudioWorkspace() {
 
         setState((prev) => {
           if (prev.url.trim() !== target) return prev
+          const preserveScreenshot =
+            assetMutationTokenRef.current.screenshot !==
+              startAssetTokens.screenshot || Boolean(prev.customScreenshotUrl)
+          const preserveAvatar =
+            assetMutationTokenRef.current.avatar !== startAssetTokens.avatar ||
+            Boolean(prev.socialAvatarUrl)
+          const preserveCover =
+            assetMutationTokenRef.current.cover !== startAssetTokens.cover ||
+            Boolean(prev.socialCoverUrl)
           return {
             ...prev,
             metadata: data,
-            customScreenshotUrl: "",
+            customScreenshotUrl: preserveScreenshot
+              ? prev.customScreenshotUrl
+              : "",
             socialPlatform: data.detectedPlatform,
             socialDisplayName: data.title || prev.socialDisplayName,
             socialHandle: data.handle || prev.socialHandle,
             socialBio: data.description ?? "",
             socialMetrics: data.metrics ?? "",
             socialCtaLabel: platformConfig.defaultCta,
-            socialAvatarUrl: data.avatarUrl ?? "",
-            socialCoverUrl: data.coverUrl ?? "",
+            socialAvatarUrl: preserveAvatar
+              ? prev.socialAvatarUrl
+              : (data.avatarUrl ?? ""),
+            socialCoverUrl: preserveCover
+              ? prev.socialCoverUrl
+              : (data.coverUrl ?? ""),
           }
         })
         setPreviewGeneration((g) => g + 1)
-        notify(`Loaded preview for ${data.displayUrl}`)
+        notify(`Loaded preview for ${data.displayUrl}`, {
+          actionLabel: "Match Brand Colors",
+          onAction: () => {
+            void extractBrandPaletteFromState({
+              ...stateRef.current,
+              metadata: data,
+            }).then((palette) => {
+              if (!palette) {
+                notify("Could not extract brand palette from this link")
+                return
+              }
+              updateState(
+                {
+                  backgroundType: "color",
+                  colorFillMode: "gradient",
+                  gradientId: "brand",
+                  gradientFrom: palette.gradientFrom,
+                  gradientVia: palette.gradientVia,
+                  gradientTo: palette.gradientTo,
+                  solidColor: palette.solidColor,
+                  tabAccentColor: palette.tabAccentColor,
+                },
+                { forceHistoryStep: true }
+              )
+              notify(`Matched brand palette (${palette.gradientFrom})`)
+            })
+          },
+        })
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           return
@@ -286,7 +370,7 @@ export function StudioWorkspace() {
         }
       }
     },
-    [state.url, notify]
+    [state.url, notify, updateState]
   )
 
   // Auto-fetch preview smoothly when the user pastes or finishes typing a domain
@@ -418,6 +502,10 @@ export function StudioWorkspace() {
         showPosterFooter: DEFAULT_STUDIO_STATE.showPosterFooter,
         posterFooterTitle: DEFAULT_STUDIO_STATE.posterFooterTitle,
         posterFooterSubtitle: DEFAULT_STUDIO_STATE.posterFooterSubtitle,
+        fontStyle: DEFAULT_STUDIO_STATE.fontStyle,
+        showCalloutBadge: DEFAULT_STUDIO_STATE.showCalloutBadge,
+        calloutText: DEFAULT_STUDIO_STATE.calloutText,
+        calloutPosition: DEFAULT_STUDIO_STATE.calloutPosition,
         ...patch,
         metadata: null,
         customScreenshotUrl: "",
@@ -635,6 +723,14 @@ export function StudioWorkspace() {
             notify("Pasted image as header icon", {
               actionLabel: "Use as Background",
               onAction: () => {
+                const latest = stateRef.current
+                if (
+                  latest.mode !== "web" ||
+                  latest.webLayout !== "tab" ||
+                  latest.customFaviconUrl !== dataUrl
+                ) {
+                  return
+                }
                 updateState(
                   {
                     customFaviconUrl: prevFavicon,
@@ -657,6 +753,14 @@ export function StudioWorkspace() {
             notify("Pasted image as browser screenshot", {
               actionLabel: "Use as Background",
               onAction: () => {
+                const latest = stateRef.current
+                if (
+                  latest.mode !== "web" ||
+                  latest.webLayout === "tab" ||
+                  latest.customScreenshotUrl !== dataUrl
+                ) {
+                  return
+                }
                 updateState(
                   {
                     customScreenshotUrl: prevScreenshot,
@@ -677,6 +781,13 @@ export function StudioWorkspace() {
           notify("Pasted image as social cover", {
             actionLabel: "Use as Avatar",
             onAction: () => {
+              const latest = stateRef.current
+              if (
+                latest.mode !== "social" ||
+                latest.socialCoverUrl !== dataUrl
+              ) {
+                return
+              }
               updateState(
                 {
                   socialCoverUrl: prevCover,

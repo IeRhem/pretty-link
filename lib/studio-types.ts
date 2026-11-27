@@ -24,6 +24,8 @@ export type BrowserChromeStyle =
 export type ChromeTheme = "light" | "dark" | "glass"
 export type PosterHeadlineAlign = "left" | "center" | "right"
 export type CornerIconPosition = "top-left" | "top-center" | "top-right"
+export type CalloutPosition = "top-left" | "top-center" | "top-right"
+export type FontStyleId = "instrument" | "geist" | "mono" | "editorial"
 
 export type SocialCardStyle = "glass" | "elevated" | "browser" | "pill" | "bento"
 export type SocialPlatformId =
@@ -151,6 +153,10 @@ export interface StudioState {
   showPosterFooter: boolean
   posterFooterTitle: string
   posterFooterSubtitle: string
+  fontStyle: FontStyleId
+  showCalloutBadge: boolean
+  calloutText: string
+  calloutPosition: CalloutPosition
 
   // Social mode options
   socialPlatform: SocialPlatformId
@@ -206,7 +212,7 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   frameShadow: 65,
   showNavButtons: true,
   webShowQr: false,
-  showCapturedFrom: false,
+  showCapturedFrom: true,
   customScreenshotUrl: "",
 
   tabTitle: "",
@@ -222,6 +228,10 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   showPosterFooter: false,
   posterFooterTitle: "leRhem",
   posterFooterSubtitle: "lerhem.space",
+  fontStyle: "instrument",
+  showCalloutBadge: false,
+  calloutText: "New Release",
+  calloutPosition: "top-right",
 
   socialPlatform: "x",
   socialCardStyle: "elevated",

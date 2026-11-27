@@ -1,6 +1,5 @@
 import { parseSocialStats } from "@/components/studio/social-mockup-card"
 import {
-  getPosterFooterStackOffset,
   hexToTintRgba,
   resolveTabAccentColor,
   resolveTabUrlForeground,
@@ -13,10 +12,15 @@ import type {
   BorderStyle,
   ExportFormat,
   ExportScale,
+  FontStyleId,
   StudioState,
 } from "@/lib/studio-types"
 import { formatDisplayUrl, normalizeUrl, toImageProxyUrl } from "@/lib/url-utils"
-import { createZipBlob, type ZipFileEntry } from "@/lib/zip"
+import {
+  createZipBlob,
+  sanitizeZipEntryName,
+  type ZipFileEntry,
+} from "@/lib/zip"
 
 export interface ExportOptions {
   format: ExportFormat
@@ -577,7 +581,11 @@ async function drawBackground(
 }
 
 function getResolvedFont(
-  varName: "--font-heading" | "--font-sans",
+  varName:
+    | "--font-heading"
+    | "--font-sans"
+    | "--font-geist-sans"
+    | "--font-geist-mono",
   fallback: string
 ): string {
   if (typeof document === "undefined") return fallback
@@ -585,6 +593,29 @@ function getResolvedFont(
     .getPropertyValue(varName)
     .trim()
   return val || fallback
+}
+
+function getResolvedHeadingFont(fontStyle?: FontStyleId): string {
+  switch (fontStyle) {
+    case "geist":
+      return getResolvedFont(
+        "--font-geist-sans",
+        '"Geist", "DM Sans", sans-serif'
+      )
+    case "mono":
+      return getResolvedFont(
+        "--font-geist-mono",
+        '"Geist Mono", ui-monospace, monospace'
+      )
+    case "editorial":
+      return 'Georgia, "Times New Roman", Times, serif'
+    case "instrument":
+    default:
+      return getResolvedFont(
+        "--font-heading",
+        '"Instrument Sans", "DM Sans", sans-serif'
+      )
+  }
 }
 
 function drawDefaultBrandIcon(
@@ -654,16 +685,24 @@ function drawPosterOverlays(
   height: number,
   faviconImg: HTMLImageElement | null
 ) {
-  if (!state.showCornerIcon && !state.showPosterHeader && !state.showPosterFooter) {
+  const hasCallout =
+    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
+  if (
+    !state.showCornerIcon &&
+    !hasCallout &&
+    !state.showPosterHeader &&
+    !state.showPosterFooter
+  ) {
     return
   }
 
   const minDim = Math.min(width, height)
   const scaleFactor = minDim / 500
   const accentColor = resolveTabAccentColor(state)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
+  const cornerSize = Math.round(46 * scaleFactor)
 
   if (state.showCornerIcon) {
-    const cornerSize = Math.round(46 * scaleFactor)
     const cy = Math.round(height * 0.055)
     let cx = Math.round(width * 0.075)
     if (state.cornerIconPosition === "top-center") {
@@ -682,6 +721,71 @@ function drawPosterOverlays(
     }
   }
 
+  if (hasCallout) {
+    const calloutLabel = state.calloutText.trim()
+    const pillH = Math.round(26 * scaleFactor)
+    const padL = Math.round(9 * scaleFactor)
+    const padR = Math.round(11 * scaleFactor)
+    const dotSize = Math.max(5, Math.round(7 * scaleFactor))
+    const gap = Math.round(6 * scaleFactor)
+    const fontSize = Math.round(11 * scaleFactor)
+    const maxPillW = Math.round(width * 0.78)
+
+    ctx.save()
+    ctx.font = `600 ${fontSize}px ${headingFont}`
+    if ("letterSpacing" in ctx) {
+      ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.02 * fontSize).toFixed(2)}px`
+    }
+    const maxTextW = Math.max(24, maxPillW - padL - dotSize - gap - padR)
+    const renderedLabel = truncateTextWithEllipsis(ctx, calloutLabel, maxTextW)
+    const textW = ctx.measureText(renderedLabel).width
+    const pillW = Math.round(padL + dotSize + gap + textW + padR)
+
+    const sharesCornerWithIcon =
+      state.showCornerIcon &&
+      state.cornerIconPosition === state.calloutPosition
+    const pillY = sharesCornerWithIcon
+      ? Math.round(height * 0.055 + cornerSize + Math.round(8 * scaleFactor))
+      : Math.round(height * 0.055)
+    let pillX = Math.round(width * 0.075)
+    if (state.calloutPosition === "top-center") {
+      pillX = Math.round((width - pillW) / 2)
+    } else if (state.calloutPosition === "top-right") {
+      pillX = Math.round(width * (1 - 0.075) - pillW)
+    }
+
+    ctx.save()
+    ctx.shadowColor = "rgba(0, 0, 0, 0.25)"
+    ctx.shadowBlur = Math.round(14 * scaleFactor)
+    ctx.shadowOffsetY = Math.round(5 * scaleFactor)
+    roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+    ctx.fillStyle = "rgba(9, 9, 11, 0.88)"
+    ctx.fill()
+    ctx.restore()
+
+    roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+    ctx.lineWidth = Math.max(1, scaleFactor)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"
+    ctx.stroke()
+
+    const dotCx = pillX + padL + dotSize / 2
+    const dotCy = pillY + pillH / 2
+    ctx.save()
+    ctx.shadowColor = accentColor
+    ctx.shadowBlur = Math.round(8 * scaleFactor)
+    ctx.beginPath()
+    ctx.arc(dotCx, dotCy, dotSize / 2, 0, Math.PI * 2)
+    ctx.fillStyle = accentColor
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = "#FFFFFF"
+    ctx.textAlign = "left"
+    ctx.textBaseline = "middle"
+    ctx.fillText(renderedLabel, pillX + padL + dotSize + gap, pillY + pillH / 2 + 0.5)
+    ctx.restore()
+  }
+
   if (state.showPosterHeader) {
     const leftX = Math.round(width * 0.08)
     const rightX = Math.round(width * (1 - 0.08))
@@ -694,10 +798,6 @@ function drawPosterOverlays(
     const trimmedAccent = state.posterAccentText.trim()
     const accentWords = trimmedAccent ? trimmedAccent.split(/\s+/) : []
 
-    const headingFont = getResolvedFont(
-      "--font-heading",
-      '"Instrument Sans", "DM Sans", sans-serif'
-    )
     ctx.save()
     ctx.font = `500 ${fontSize}px ${headingFont}`
     ctx.textBaseline = "top"
@@ -815,10 +915,6 @@ function drawPosterOverlays(
     }
 
     if (hasTitle) {
-      const headingFont = getResolvedFont(
-        "--font-heading",
-        '"Instrument Sans", sans-serif'
-      )
       ctx.font = `700 ${titleSize}px ${headingFont}`
       if ("letterSpacing" in ctx) {
         ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.06 * titleSize).toFixed(2)}px`
@@ -870,123 +966,6 @@ function drawWebQrBadge(
   ctx.lineWidth = Math.max(1, scaleFactor)
   ctx.strokeStyle = "rgba(0, 0, 0, 0.1)"
   ctx.stroke()
-  ctx.restore()
-}
-
-function drawCapturedFromBadge(
-  ctx: CanvasRenderingContext2D,
-  state: StudioState,
-  width: number,
-  height: number,
-  faviconImg: HTMLImageElement | null
-) {
-  if (state.mode !== "web" || !state.showCapturedFrom) return
-
-  const scaleFactor = Math.min(width, height) / 500
-  const pillH = Math.round(30 * scaleFactor)
-  const padL = Math.round(8 * scaleFactor)
-  const padR = Math.round(12 * scaleFactor)
-  const gap = Math.round(6 * scaleFactor)
-  const iconSize = Math.round(16 * scaleFactor)
-  const arrowSize = Math.round(12 * scaleFactor)
-  const accentColor = resolveTabAccentColor(state)
-  const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
-
-  const footerOffset = getPosterFooterStackOffset(state, scaleFactor, width)
-  const maxPillPct = state.webShowQr
-    ? footerOffset > 0
-      ? 0.72
-      : 0.64
-    : 0.86
-  const maxPillW = Math.round(width * maxPillPct)
-  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
-  const capturedFontSize = Math.round(10.5 * scaleFactor)
-  const domainFontSize = Math.round(11 * scaleFactor)
-
-  ctx.save()
-  ctx.font = `500 ${capturedFontSize}px ${sansFont}`
-  const capturedW = ctx.measureText("Captured from").width
-
-  ctx.font = `600 ${domainFontSize}px ${sansFont}`
-  const maxDomainW = Math.max(
-    24,
-    maxPillW - padL - iconSize - gap - capturedW - gap - gap - arrowSize - padR
-  )
-  const renderedDomain = truncateTextWithEllipsis(ctx, domainLabel, maxDomainW)
-  const domainW = ctx.measureText(renderedDomain).width
-
-  const pillW = Math.round(
-    padL + iconSize + gap + capturedW + gap + domainW + gap + arrowSize + padR
-  )
-  const pillX =
-    footerOffset > 0 && state.webShowQr
-      ? Math.round(width * 0.045)
-      : Math.round((width - pillW) / 2)
-  const pillY = Math.round(height * (1 - 0.045) - footerOffset - pillH)
-
-  // Drop shadow + dark pill fill
-  ctx.save()
-  ctx.shadowColor = "rgba(0, 0, 0, 0.28)"
-  ctx.shadowBlur = Math.round(18 * scaleFactor)
-  ctx.shadowOffsetY = Math.round(6 * scaleFactor)
-  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
-  ctx.fillStyle = "rgba(9, 9, 11, 0.9)"
-  ctx.fill()
-  ctx.restore()
-
-  // Hairline border
-  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
-  ctx.lineWidth = Math.max(1, scaleFactor)
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"
-  ctx.stroke()
-
-  // Favicon / brand icon
-  const iconX = pillX + padL
-  const iconY = pillY + (pillH - iconSize) / 2
-  if (faviconImg) {
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2)
-    ctx.clip()
-    drawContainedImage(ctx, faviconImg, iconX, iconY, iconSize, iconSize)
-    ctx.restore()
-  } else {
-    drawDefaultBrandIcon(ctx, iconX, iconY, iconSize, accentColor, false)
-  }
-
-  // "Captured from" muted label
-  const textX = iconX + iconSize + gap
-  ctx.font = `500 ${capturedFontSize}px ${sansFont}`
-  ctx.fillStyle = "rgba(255, 255, 255, 0.65)"
-  ctx.textAlign = "left"
-  ctx.textBaseline = "middle"
-  ctx.fillText("Captured from", textX, pillY + pillH / 2 + 0.5)
-
-  // Bold domain
-  const domainX = textX + capturedW + gap
-  ctx.font = `600 ${domainFontSize}px ${sansFont}`
-  ctx.fillStyle = "#FFFFFF"
-  ctx.fillText(renderedDomain, domainX, pillY + pillH / 2 + 0.5)
-
-  // External link arrow
-  const arrowCx = domainX + domainW + gap + arrowSize / 2
-  const arrowCy = pillY + pillH / 2
-  const as = arrowSize * 0.28
-  ctx.save()
-  ctx.globalAlpha = 0.75
-  ctx.strokeStyle = "#FFFFFF"
-  ctx.lineWidth = Math.max(1.1, 1.6 * scaleFactor)
-  ctx.lineCap = "round"
-  ctx.lineJoin = "round"
-  ctx.beginPath()
-  ctx.moveTo(arrowCx - as, arrowCy + as)
-  ctx.lineTo(arrowCx + as, arrowCy - as)
-  ctx.moveTo(arrowCx - as * 0.2, arrowCy - as)
-  ctx.lineTo(arrowCx + as, arrowCy - as)
-  ctx.lineTo(arrowCx + as, arrowCy + as * 0.2)
-  ctx.stroke()
-  ctx.restore()
-
   ctx.restore()
 }
 
@@ -2239,6 +2218,7 @@ async function drawSocialMode(
   const initial = displayName.charAt(0).toUpperCase() || "O"
   const handleText = state.socialHandle || "@Oliviar_"
   const displayUrl = formatDisplayUrl(state.url)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
 
   const cardW = isPill
     ? Math.round(width * 0.86 * userScale)
@@ -2347,7 +2327,7 @@ async function drawSocialMode(
 
     ctx.textBaseline = "top"
     ctx.textAlign = "left"
-    ctx.font = `700 ${Math.round(18 * scaleFactor)}px "Instrument Sans", sans-serif`
+    ctx.font = `700 ${Math.round(18 * scaleFactor)}px ${headingFont}`
     ctx.fillStyle = fg
     const badgeR = Math.round(7.5 * scaleFactor)
     const badgeSpace = state.socialVerified ? badgeR * 2 + Math.round(6 * scaleFactor) : 0
@@ -2507,7 +2487,7 @@ async function drawSocialMode(
     const textMaxW = Math.max(80, innerW)
     ctx.textBaseline = "top"
     ctx.textAlign = "left"
-    ctx.font = `700 ${Math.round(17 * scaleFactor)}px "Instrument Sans", sans-serif`
+    ctx.font = `700 ${Math.round(17 * scaleFactor)}px ${headingFont}`
     ctx.fillStyle = fg
 
     const badgeR = Math.round(7.5 * scaleFactor)
@@ -2680,9 +2660,8 @@ export async function renderStudioToCanvas(
     faviconCandidates.length > 0 &&
     (state.showCornerIcon ||
       (state.mode === "web" &&
-        (state.showCapturedFrom ||
-          (state.browserChrome !== "mobile" &&
-            (state.webLayout === "tab" || state.browserChrome === "chrome")))))
+        state.browserChrome !== "mobile" &&
+        (state.webLayout === "tab" || state.browserChrome === "chrome")))
   const faviconImg = needsFavicon
     ? await loadFaviconWithBudget(faviconCandidates)
     : null
@@ -2692,7 +2671,6 @@ export async function renderStudioToCanvas(
   if (state.mode === "web") {
     await drawWebMode(ctx, state, logicalW, logicalH, faviconImg)
     drawWebQrBadge(ctx, state, logicalW, logicalH)
-    drawCapturedFromBadge(ctx, state, logicalW, logicalH, faviconImg)
   } else {
     await drawSocialMode(ctx, state, logicalW, logicalH)
   }
@@ -2729,6 +2707,10 @@ export async function exportStudioBlob(
       options.format === "png" ? undefined : 0.94
     )
   })
+
+  if (!state.showCapturedFrom) {
+    return rawBlob
+  }
 
   const trimmedTabTitle =
     typeof state.tabTitle === "string" ? state.tabTitle.trim() : ""
@@ -2805,8 +2787,11 @@ export async function downloadBatchSocialKitZip(
     .replace(/[^a-z0-9.-]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
-  const baseName =
+  const rawBaseName =
     options.baseFilename?.trim() || `prettylink-${cleanHost || "shot"}`
+  const baseName = sanitizeZipEntryName(rawBaseName)
+    .replace(/[\/\\]+/g, "-")
+    .replace(/^-+|-+$/g, "") || `prettylink-${cleanHost || "shot"}`
   const ext = options.format === "jpeg" ? "jpg" : options.format
 
   const entries: ZipFileEntry[] = []

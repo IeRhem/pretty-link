@@ -48,7 +48,6 @@ import {
 } from "@/lib/presets"
 import type { StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl } from "@/lib/url-utils"
-import { cn } from "@/lib/utils"
 
 export function PreviewStage({
   state,
@@ -122,33 +121,29 @@ export function PreviewStage({
     setSavingPreset(false)
   }
 
+  const doesPatchMatchState = (patch: Partial<StudioState>) =>
+    (Object.keys(patch) as Array<keyof StudioState>).every((key) => {
+      const expected = patch[key]
+      if (expected === undefined) return true
+      if (
+        (key === "customWidth" || key === "customHeight") &&
+        state.aspectRatioId !== "custom" &&
+        patch.aspectRatioId !== "custom"
+      ) {
+        return true
+      }
+      return state[key] === expected
+    })
+
   const isCustomPresetActive = (preset: CustomPreset) =>
-    state.mode === preset.mode &&
-    state.aspectRatioId === preset.patch.aspectRatioId &&
-    state.backgroundType === preset.patch.backgroundType &&
-    state.gradientFrom === preset.patch.gradientFrom &&
-    state.gradientTo === preset.patch.gradientTo &&
-    state.solidColor === preset.patch.solidColor &&
-    state.borderStyle === preset.patch.borderStyle &&
-    (!preset.patch.webLayout || state.webLayout === preset.patch.webLayout) &&
-    (!preset.patch.socialCardStyle ||
-      state.socialCardStyle === preset.patch.socialCardStyle)
+    state.mode === preset.mode && doesPatchMatchState(preset.patch)
 
   const isTemplateActive = (tpl: (typeof QUICK_TEMPLATES)[number]) =>
-    state.mode === tpl.mode &&
-    state.url === tpl.patch.url &&
-    state.aspectRatioId === tpl.patch.aspectRatioId &&
-    (!tpl.patch.webLayout || state.webLayout === tpl.patch.webLayout) &&
-    (!tpl.patch.browserChrome || state.browserChrome === tpl.patch.browserChrome) &&
-    (!tpl.patch.socialCardStyle ||
-      state.socialCardStyle === tpl.patch.socialCardStyle)
+    state.mode === tpl.mode && doesPatchMatchState(tpl.patch)
 
+  const activeCustomPreset = customPresets.find(isCustomPresetActive) ?? null
   const activeTemplate = QUICK_TEMPLATES.find(isTemplateActive) ?? null
-  const activeCustomPreset =
-    !activeTemplate
-      ? (customPresets.find(isCustomPresetActive) ?? null)
-      : null
-  const activePresetDisplay = activeTemplate ?? activeCustomPreset
+  const activePresetDisplay = activeCustomPreset ?? activeTemplate
 
   const handleShareClick = () => {
     onShareLink()
@@ -444,7 +439,7 @@ export function PreviewStage({
           </form>
         )}
 
-        <div className="flex max-w-full items-center justify-center gap-2 @4xl/stage:hidden">
+        <div className="flex max-w-full items-center justify-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger
               className="group inline-flex h-10 max-w-full min-w-0 items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md transition-colors hover:bg-muted/70 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-popup-open:bg-muted data-popup-open:ring-1 data-popup-open:ring-border [@media(pointer:coarse)]:min-h-11"
@@ -573,85 +568,6 @@ export function PreviewStage({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
-
-        <div className="hidden max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-2xs backdrop-blur-md @4xl/stage:flex">
-          <span className="px-2 text-[11px] font-medium whitespace-nowrap text-muted-foreground">
-            Presets
-          </span>
-          {QUICK_TEMPLATES.map((tpl) => {
-            const isActive = isTemplateActive(tpl)
-            return (
-              <button
-                key={tpl.id}
-                type="button"
-                aria-pressed={isActive}
-                onClick={() => onApplyTemplate(tpl.patch)}
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 rounded-xl px-2 py-1 text-[11px] font-medium whitespace-nowrap transition-colors",
-                  isActive
-                    ? "bg-muted text-foreground ring-1 ring-border"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                )}
-              >
-                <span
-                  style={{ backgroundImage: tpl.swatch }}
-                  className="size-3 rounded-full ring-1 ring-white/20"
-                />
-                <span>{tpl.name}</span>
-              </button>
-            )
-          })}
-
-          {customPresets.map((preset) => {
-            const isActive =
-              !activeTemplate && activeCustomPreset?.id === preset.id
-            return (
-              <div
-                key={preset.id}
-                className={cn(
-                  "group inline-flex shrink-0 items-center rounded-xl text-[11px] font-medium whitespace-nowrap transition-colors",
-                  isActive
-                    ? "bg-muted text-foreground ring-1 ring-border"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                )}
-              >
-                <button
-                  type="button"
-                  aria-pressed={isActive}
-                  onClick={() => onApplyCustomPreset?.(preset)}
-                  className="inline-flex items-center gap-1.5 py-1 pr-1 pl-2"
-                >
-                  <span
-                    style={{ backgroundImage: preset.swatch }}
-                    className="size-3 rounded-full ring-1 ring-white/20"
-                  />
-                  <span>{preset.name}</span>
-                </button>
-                {onDeleteCustomPreset && (
-                  <button
-                    type="button"
-                    onClick={() => onDeleteCustomPreset(preset.id)}
-                    aria-label={`Delete ${preset.name} preset`}
-                    className="mr-1 flex size-4 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
-                  >
-                    <IconX className="size-2.5" aria-hidden="true" />
-                  </button>
-                )}
-              </div>
-            )
-          })}
-
-          {onSaveCustomPreset && !savingPreset && (
-            <button
-              type="button"
-              onClick={() => setSavingPreset(true)}
-              className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-dashed border-border/80 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
-            >
-              <IconPlus className="size-3" aria-hidden="true" />
-              <span>Save</span>
-            </button>
-          )}
         </div>
 
         {onOpenExport && (

@@ -37,10 +37,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SOCIAL_PLATFORM_LIST, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
+import {
+  CALLOUT_PRESET_CHIPS,
+  FONT_STYLES,
+  getFontStyleCssFamily,
+} from "@/lib/presets"
 import { getQrByteLength, QR_MAX_BYTE_LENGTH } from "@/lib/qr"
 import type {
   BorderStyle,
   BrowserChromeStyle,
+  CalloutPosition,
   ChromeTheme,
   CornerIconPosition,
   PosterHeadlineAlign,
@@ -127,6 +133,7 @@ export function ControlSidebar({
   const capturedFromLabelId = React.useId()
   const socialQrLabelId = React.useId()
   const cornerIconLabelId = React.useId()
+  const calloutBadgeLabelId = React.useId()
   const headlineTextLabelId = React.useId()
   const footerSignatureLabelId = React.useId()
 
@@ -557,7 +564,7 @@ export function ControlSidebar({
                       id={capturedFromLabelId}
                       className="text-xs text-muted-foreground"
                     >
-                      &ldquo;Captured from&rdquo; Badge
+                      &ldquo;Captured from&rdquo; Metadata
                     </Label>
                     <Switch
                       aria-labelledby={capturedFromLabelId}
@@ -1015,6 +1022,124 @@ export function ControlSidebar({
 
               {posterSectionOpen && (
                 <div className="space-y-3">
+                  {/* Typography Style Picker */}
+                  <div className="space-y-1.5 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Typography Style
+                    </Label>
+                    <div className="grid grid-cols-4 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {FONT_STYLES.map((font) => {
+                        const active =
+                          (state.fontStyle ?? "instrument") === font.id
+                        return (
+                          <button
+                            key={font.id}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => onChange({ fontStyle: font.id })}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[10px] font-medium transition-colors",
+                              active
+                                ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            <span
+                              style={{
+                                fontFamily: getFontStyleCssFamily(font.id),
+                              }}
+                              className="text-xs font-bold leading-none"
+                            >
+                              {font.previewSample}
+                            </span>
+                            <span>{font.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Callout / Annotation Badge */}
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label
+                        id={calloutBadgeLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
+                        Callout Badge
+                      </Label>
+                      <Switch
+                        aria-labelledby={calloutBadgeLabelId}
+                        checked={state.showCalloutBadge}
+                        onCheckedChange={(checked) =>
+                          onChange({ showCalloutBadge: checked })
+                        }
+                      />
+                    </div>
+                    {state.showCalloutBadge && (
+                      <div className="space-y-2 pt-1">
+                        <Input
+                          value={state.calloutText}
+                          onChange={(e) =>
+                            onChange({ calloutText: e.target.value })
+                          }
+                          placeholder="New Release"
+                          maxLength={36}
+                          aria-label="Callout badge text"
+                          className="h-8 text-xs"
+                        />
+                        <div className="flex flex-wrap gap-1">
+                          {CALLOUT_PRESET_CHIPS.map((chip) => {
+                            const active = state.calloutText === chip
+                            return (
+                              <button
+                                key={chip}
+                                type="button"
+                                onClick={() => onChange({ calloutText: chip })}
+                                className={cn(
+                                  "rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                                  active
+                                    ? "border-primary/60 bg-primary/15 text-foreground"
+                                    : "border-border/70 bg-background/50 text-muted-foreground hover:text-foreground"
+                                )}
+                              >
+                                {chip}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                          {(
+                            [
+                              { id: "top-left", label: "Left" },
+                              { id: "top-center", label: "Center" },
+                              { id: "top-right", label: "Right" },
+                            ] as Array<{
+                              id: CalloutPosition
+                              label: string
+                            }>
+                          ).map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                onChange({ calloutPosition: opt.id })
+                              }
+                              className={cn(
+                                "rounded-lg py-1 text-[11px] font-medium transition-colors",
+                                state.calloutPosition === opt.id
+                                  ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Corner Icon Watermark */}
                   <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
                     <div className="flex items-center justify-between">

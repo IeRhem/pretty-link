@@ -37,6 +37,19 @@ function getDosDateTime(date = new Date()): { dosTime: number; dosDate: number }
   return { dosTime, dosDate }
 }
 
+export function sanitizeZipEntryName(rawName: string): string {
+  const normalized = rawName
+    .replace(/\\/g, "/")
+    .replace(/^[a-zA-Z]:+/, "")
+    .replace(/[\u0000-\u001f\u007f]+/g, "")
+  const segments = normalized
+    .split("/")
+    .map((s) => s.trim().replace(/[:*?"<>|]+/g, "-"))
+    .filter((s) => s.length > 0 && s !== "." && s !== "..")
+  const base = segments[segments.length - 1] ?? ""
+  return base.replace(/^\.+/, "") || "file"
+}
+
 /**
  * Builds a standard uncompressed (Store method 0) ZIP archive from in-memory files.
  * Since PNG, JPEG, and WebP images are already compressed, Store avoids re-compression overhead.
@@ -49,7 +62,7 @@ export function createZipBytes(
   const { dosTime, dosDate } = getDosDateTime(now)
 
   const prepared = entries.map((entry) => {
-    const safeName = entry.name.replace(/^\/+/, "") || "file"
+    const safeName = sanitizeZipEntryName(entry.name)
     const nameBytes = encoder.encode(safeName)
     const crc = crc32(entry.data)
     return {

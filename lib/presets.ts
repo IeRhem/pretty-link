@@ -1,11 +1,44 @@
 import type {
   AspectRatioPreset,
   BackgroundPattern,
+  FontStyleId,
   GradientPreset,
   StudioMode,
   StudioState,
   UnsplashPhoto,
 } from "@/lib/studio-types"
+
+export const FONT_STYLES: Array<{
+  id: FontStyleId
+  label: string
+  previewSample: string
+}> = [
+  { id: "instrument", label: "Instrument", previewSample: "Aa" },
+  { id: "geist", label: "Geist", previewSample: "Aa" },
+  { id: "mono", label: "Mono", previewSample: "01" },
+  { id: "editorial", label: "Editorial", previewSample: "Aa" },
+]
+
+export const CALLOUT_PRESET_CHIPS: string[] = [
+  "New Release",
+  "Live Demo",
+  "Open Source",
+  "Featured",
+]
+
+export function getFontStyleCssFamily(fontStyle?: FontStyleId): string {
+  switch (fontStyle) {
+    case "geist":
+      return 'var(--font-geist-sans), "Geist", "DM Sans", sans-serif'
+    case "mono":
+      return 'var(--font-geist-mono), "Geist Mono", ui-monospace, SFMono-Regular, monospace'
+    case "editorial":
+      return 'Georgia, "Times New Roman", Times, serif'
+    case "instrument":
+    default:
+      return 'var(--font-heading), "Instrument Sans", "DM Sans", sans-serif'
+  }
+}
 
 export const BACKGROUND_PATTERNS: Array<{
   id: BackgroundPattern
@@ -881,6 +914,9 @@ export function extractStylePresetPatch(
     posterHeadlineAlign: state.posterHeadlineAlign,
     posterHeadlineSize: state.posterHeadlineSize,
     showPosterFooter: state.showPosterFooter,
+    fontStyle: state.fontStyle,
+    showCalloutBadge: state.showCalloutBadge,
+    calloutPosition: state.calloutPosition,
     socialCardStyle: state.socialCardStyle,
     socialCardTheme: state.socialCardTheme,
     socialVerified: state.socialVerified,
