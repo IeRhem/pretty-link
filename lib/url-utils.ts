@@ -106,6 +106,38 @@ export function validatePublicUrl(
   return { ok: true, url: parsed }
 }
 
+export function resolvePublicAppOrigin(
+  hostHeader?: string | null,
+  protoHeader?: string | null
+): string {
+  const candidates = [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.NEXT_PUBLIC_SITE_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_URL,
+  ]
+
+  for (const candidate of candidates) {
+    if (!candidate || !candidate.trim()) continue
+    const check = validatePublicUrl(candidate.trim())
+    if (check.ok) {
+      return check.url.origin
+    }
+  }
+
+  if (hostHeader && hostHeader.trim()) {
+    const firstHost = hostHeader.split(",")[0]!.trim()
+    const rawProto = protoHeader?.split(",")[0]?.trim().toLowerCase()
+    const proto = rawProto === "http" ? "http" : "https"
+    const check = validatePublicUrl(`${proto}://${firstHost}`)
+    if (check.ok) {
+      return check.url.origin
+    }
+  }
+
+  return "https://www.lerhem.space"
+}
+
 export function toImageProxyUrl(remoteUrl: string | null | undefined): string | null {
   if (!remoteUrl) return null
   if (remoteUrl.startsWith("/api/image-proxy?") || remoteUrl.startsWith("data:")) {
@@ -168,12 +200,30 @@ export function encodeShareState(state: StudioState): string {
     frameOffsetX: state.frameOffsetX,
     frameOffsetY: state.frameOffsetY,
     frameShadow: state.frameShadow,
+    frameTilt: state.frameTilt,
     showNavButtons: state.showNavButtons,
     webShowQr: state.webShowQr,
-    showCapturedFrom: state.showCapturedFrom,
     customScreenshotUrl: state.customScreenshotUrl.startsWith("data:")
       ? ""
       : state.customScreenshotUrl,
+    customMobileScreenshotUrl: state.customMobileScreenshotUrl.startsWith("data:")
+      ? ""
+      : state.customMobileScreenshotUrl,
+    showSpotlight: state.showSpotlight,
+    spotlightX: state.spotlightX,
+    spotlightY: state.spotlightY,
+    spotlightRadius: state.spotlightRadius,
+    spotlightDim: state.spotlightDim,
+    codeCardStyle: state.codeCardStyle,
+    codeTheme: state.codeTheme,
+    codeLanguage: state.codeLanguage,
+    codeFilename: state.codeFilename,
+    codeShowLineNumbers: state.codeShowLineNumbers,
+    codeContent: state.codeContent,
+    changelogVersion: state.changelogVersion,
+    changelogDate: state.changelogDate,
+    changelogTitle: state.changelogTitle,
+    changelogItems: state.changelogItems,
     tabTitle: state.tabTitle,
     tabAccentColor: state.tabAccentColor,
     customFaviconUrl: state.customFaviconUrl.startsWith("data:")
@@ -189,6 +239,10 @@ export function encodeShareState(state: StudioState): string {
     showPosterFooter: state.showPosterFooter,
     posterFooterTitle: state.posterFooterTitle,
     posterFooterSubtitle: state.posterFooterSubtitle,
+    fontStyle: state.fontStyle,
+    showCalloutBadge: state.showCalloutBadge,
+    calloutText: state.calloutText,
+    calloutPosition: state.calloutPosition,
     socialPlatform: state.socialPlatform,
     socialCardStyle: state.socialCardStyle,
     socialCardTheme: state.socialCardTheme,
@@ -214,7 +268,7 @@ export const SHARE_STATE_MAX_LENGTH = 8192
 const SHARE_ENUM_VALUES: Partial<
   Record<keyof StudioState, ReadonlySet<string>>
 > = {
-  mode: new Set(["web", "social"]),
+  mode: new Set(["web", "social", "code"]),
   backgroundType: new Set(["none", "color", "image", "unsplash"]),
   colorFillMode: new Set(["gradient", "solid"]),
   bgPattern: new Set([
@@ -228,7 +282,27 @@ const SHARE_ENUM_VALUES: Partial<
     "spotlight",
   ]),
   borderStyle: new Set(["sharp", "curved", "round"]),
-  webLayout: new Set(["offset", "centered", "docked", "floating", "tab"]),
+  webLayout: new Set([
+    "offset",
+    "centered",
+    "docked",
+    "floating",
+    "tab",
+    "duo",
+  ]),
+  frameTilt: new Set(["flat", "tilt-left", "tilt-right", "float-up"]),
+  codeCardStyle: new Set(["snippet", "changelog"]),
+  codeTheme: new Set(["light", "dark", "glass"]),
+  codeLanguage: new Set([
+    "typescript",
+    "javascript",
+    "python",
+    "rust",
+    "go",
+    "bash",
+    "json",
+    "css",
+  ]),
   browserChrome: new Set([
     "chrome",
     "safari",
@@ -239,6 +313,8 @@ const SHARE_ENUM_VALUES: Partial<
   ]),
   chromeTheme: new Set(["light", "dark", "glass"]),
   cornerIconPosition: new Set(["top-left", "top-center", "top-right"]),
+  calloutPosition: new Set(["top-left", "top-center", "top-right"]),
+  fontStyle: new Set(["instrument", "geist", "mono", "editorial"]),
   posterHeadlineAlign: new Set(["left", "center", "right"]),
   socialPlatform: new Set([
     "x",
@@ -290,7 +366,15 @@ export function decodeShareState(encoded: string): Partial<StudioState> | null {
         }
       } else if (typeof defaultVal === "number") {
         if (typeof val === "number" && Number.isFinite(val)) {
-          validated[key] = val
+          if (key === "spotlightRadius") {
+            validated[key] = Math.max(12, Math.min(55, Math.round(val)))
+          } else if (key === "spotlightX" || key === "spotlightY") {
+            validated[key] = Math.max(10, Math.min(90, Math.round(val)))
+          } else if (key === "spotlightDim") {
+            validated[key] = Math.max(20, Math.min(85, Math.round(val)))
+          } else {
+            validated[key] = val
+          }
         }
       } else if (typeof defaultVal === "boolean") {
         if (typeof val === "boolean") {

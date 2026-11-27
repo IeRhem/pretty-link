@@ -1,21 +1,37 @@
+import {
+  CODE_LANGUAGES,
+  getTokenColor,
+  parseChangelogItems,
+  tokenizeCodeLine,
+} from "@/components/studio/code-mockup-card"
 import { parseSocialStats } from "@/components/studio/social-mockup-card"
 import {
-  getPosterFooterStackOffset,
   hexToTintRgba,
   resolveTabAccentColor,
   resolveTabUrlForeground,
 } from "@/components/studio/web-mockup-card"
 import { embedUrlMetadataInImageBlob } from "@/lib/image-metadata"
-import { resolveAspectDimensions } from "@/lib/presets"
+import {
+  ASPECT_RATIOS,
+  getFrameTiltMatrix,
+  resolveAspectDimensions,
+  resolveUnsplashPhotoUrl,
+} from "@/lib/presets"
 import { generateQrMatrix } from "@/lib/qr"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import type {
   BorderStyle,
   ExportFormat,
   ExportScale,
+  FontStyleId,
   StudioState,
 } from "@/lib/studio-types"
 import { formatDisplayUrl, normalizeUrl, toImageProxyUrl } from "@/lib/url-utils"
+import {
+  createZipBlob,
+  sanitizeZipEntryName,
+  type ZipFileEntry,
+} from "@/lib/zip"
 
 export interface ExportOptions {
   format: ExportFormat
@@ -534,6 +550,11 @@ async function drawBackground(
       ctx.fillRect(0, 0, width, height)
     }
 
+    if (state.bgDim > 0) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(0.85, state.bgDim / 100)})`
+      ctx.fillRect(0, 0, width, height)
+    }
+
     if (state.noiseOverlay) {
       drawNoiseOverlay(ctx, width, height)
     }
@@ -542,7 +563,11 @@ async function drawBackground(
   }
 
   // Image or Unsplash
-  const src = state.backgroundImageUrl
+  const src =
+    state.backgroundImageUrl ||
+    (state.backgroundType === "unsplash"
+      ? resolveUnsplashPhotoUrl(state.unsplashPhotoId)
+      : "")
   const bgImg = await loadImageSafe(src)
   if (bgImg) {
     ctx.save()
@@ -576,7 +601,11 @@ async function drawBackground(
 }
 
 function getResolvedFont(
-  varName: "--font-heading" | "--font-sans",
+  varName:
+    | "--font-heading"
+    | "--font-sans"
+    | "--font-geist-sans"
+    | "--font-geist-mono",
   fallback: string
 ): string {
   if (typeof document === "undefined") return fallback
@@ -584,6 +613,29 @@ function getResolvedFont(
     .getPropertyValue(varName)
     .trim()
   return val || fallback
+}
+
+function getResolvedHeadingFont(fontStyle?: FontStyleId): string {
+  switch (fontStyle) {
+    case "geist":
+      return getResolvedFont(
+        "--font-geist-sans",
+        '"Geist", "DM Sans", sans-serif'
+      )
+    case "mono":
+      return getResolvedFont(
+        "--font-geist-mono",
+        '"Geist Mono", ui-monospace, monospace'
+      )
+    case "editorial":
+      return 'Georgia, "Times New Roman", Times, serif'
+    case "instrument":
+    default:
+      return getResolvedFont(
+        "--font-heading",
+        '"Instrument Sans", "DM Sans", sans-serif'
+      )
+  }
 }
 
 function drawDefaultBrandIcon(
@@ -646,6 +698,162 @@ function drawContainedImage(
   ctx.drawImage(img, dx, dy, dw, dh)
 }
 
+function drawCalloutBadge(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  const hasCallout =
+    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
+  if (!hasCallout) return
+
+  const minDim = Math.min(width, height)
+  const scaleFactor = minDim / 500
+  const accentColor = resolveTabAccentColor(state)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
+  const cornerSize = Math.round(46 * scaleFactor)
+
+  const calloutLabel = state.calloutText.trim()
+  const pillH = Math.round(26 * scaleFactor)
+  const padL = Math.round(9 * scaleFactor)
+  const padR = Math.round(11 * scaleFactor)
+  const dotSize = Math.max(5, Math.round(7 * scaleFactor))
+  const gap = Math.round(6 * scaleFactor)
+  const fontSize = Math.round(11 * scaleFactor)
+  let maxPillW = Math.round(width * 0.78)
+
+  const sharesCornerWithIcon =
+    state.showCornerIcon && state.cornerIconPosition === state.calloutPosition
+  let pillY = sharesCornerWithIcon
+    ? Math.round(height * 0.055 + cornerSize + Math.round(8 * scaleFactor))
+    : Math.round(height * 0.055)
+
+  const hasHeadlineText =
+    state.showPosterHeader &&
+    Boolean(state.posterHeadline.trim() || state.posterAccentText.trim())
+  const headlineTopY = Math.round(height * 0.17)
+  const minHeadlineGap = Math.round(6 * scaleFactor)
+  const clampedHeadlineY = Math.max(
+    Math.round(4 * scaleFactor),
+    headlineTopY - pillH - minHeadlineGap
+  )
+
+  const willOverlapHeadline =
+    hasHeadlineText && pillY + pillH + minHeadlineGap > headlineTopY
+  const willSitBesideIcon =
+    willOverlapHeadline &&
+    sharesCornerWithIcon &&
+    clampedHeadlineY < Math.round(height * 0.055) + cornerSize
+
+  if (willSitBesideIcon) {
+    if (state.calloutPosition === "top-left") {
+      const startX = Math.round(
+        width * 0.075 + cornerSize + Math.round(10 * scaleFactor)
+      )
+      maxPillW = Math.max(48, Math.round(width * 0.96) - startX)
+    } else if (state.calloutPosition === "top-center") {
+      const startX = Math.round(
+        width / 2 + cornerSize / 2 + Math.round(10 * scaleFactor)
+      )
+      maxPillW = Math.max(48, Math.round(width * 0.96) - startX)
+    } else if (state.calloutPosition === "top-right") {
+      const endX = Math.round(
+        width * (1 - 0.075) - cornerSize - Math.round(10 * scaleFactor)
+      )
+      maxPillW = Math.max(48, endX - Math.round(width * 0.04))
+    }
+  }
+
+  ctx.save()
+  ctx.font = `600 ${fontSize}px ${headingFont}`
+  if ("letterSpacing" in ctx) {
+    ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.02 * fontSize).toFixed(2)}px`
+  }
+  const maxTextW = Math.max(24, maxPillW - padL - dotSize - gap - padR)
+  const renderedLabel = truncateTextWithEllipsis(ctx, calloutLabel, maxTextW)
+  const textW = ctx.measureText(renderedLabel).width
+  const pillW = Math.round(padL + dotSize + gap + textW + padR)
+
+  let pillX = Math.round(width * 0.075)
+  if (state.calloutPosition === "top-center") {
+    pillX = Math.round((width - pillW) / 2)
+  } else if (state.calloutPosition === "top-right") {
+    pillX = Math.round(width * (1 - 0.075) - pillW)
+  }
+
+  const intersectsLeftHeadline =
+    hasHeadlineText &&
+    (state.posterHeadlineAlign === "left"
+      ? state.calloutPosition === "top-left" || pillX < Math.round(width * 0.92)
+      : state.posterHeadlineAlign === "right"
+        ? state.calloutPosition === "top-right" ||
+          pillX + pillW > Math.round(width * 0.08)
+        : true)
+  if (
+    intersectsLeftHeadline &&
+    pillY + pillH + minHeadlineGap > headlineTopY
+  ) {
+    pillY = clampedHeadlineY
+    if (
+      sharesCornerWithIcon &&
+      pillY < Math.round(height * 0.055) + cornerSize
+    ) {
+      if (state.calloutPosition === "top-left") {
+        pillX = Math.round(
+          width * 0.075 + cornerSize + Math.round(10 * scaleFactor)
+        )
+      } else if (state.calloutPosition === "top-center") {
+        pillX = Math.round(
+          width / 2 + cornerSize / 2 + Math.round(10 * scaleFactor)
+        )
+      } else if (state.calloutPosition === "top-right") {
+        pillX = Math.round(
+          width * (1 - 0.075) -
+            cornerSize -
+            Math.round(10 * scaleFactor) -
+            pillW
+        )
+      }
+    }
+  }
+
+  ctx.save()
+  ctx.shadowColor = "rgba(0, 0, 0, 0.25)"
+  ctx.shadowBlur = Math.round(14 * scaleFactor)
+  ctx.shadowOffsetY = Math.round(5 * scaleFactor)
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+  ctx.fillStyle = "rgba(9, 9, 11, 0.88)"
+  ctx.fill()
+  ctx.restore()
+
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+  ctx.lineWidth = Math.max(1, scaleFactor)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"
+  ctx.stroke()
+
+  const dotCx = pillX + padL + dotSize / 2
+  const dotCy = pillY + pillH / 2
+  ctx.save()
+  ctx.shadowColor = accentColor
+  ctx.shadowBlur = Math.round(8 * scaleFactor)
+  ctx.beginPath()
+  ctx.arc(dotCx, dotCy, dotSize / 2, 0, Math.PI * 2)
+  ctx.fillStyle = accentColor
+  ctx.fill()
+  ctx.restore()
+
+  ctx.fillStyle = "#FFFFFF"
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  ctx.fillText(
+    renderedLabel,
+    pillX + padL + dotSize + gap,
+    pillY + pillH / 2 + 0.5
+  )
+  ctx.restore()
+}
+
 function drawPosterOverlays(
   ctx: CanvasRenderingContext2D,
   state: StudioState,
@@ -653,16 +861,21 @@ function drawPosterOverlays(
   height: number,
   faviconImg: HTMLImageElement | null
 ) {
-  if (!state.showCornerIcon && !state.showPosterHeader && !state.showPosterFooter) {
+  if (
+    !state.showCornerIcon &&
+    !state.showPosterHeader &&
+    !state.showPosterFooter
+  ) {
     return
   }
 
   const minDim = Math.min(width, height)
   const scaleFactor = minDim / 500
   const accentColor = resolveTabAccentColor(state)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
+  const cornerSize = Math.round(46 * scaleFactor)
 
   if (state.showCornerIcon) {
-    const cornerSize = Math.round(46 * scaleFactor)
     const cy = Math.round(height * 0.055)
     let cx = Math.round(width * 0.075)
     if (state.cornerIconPosition === "top-center") {
@@ -693,10 +906,6 @@ function drawPosterOverlays(
     const trimmedAccent = state.posterAccentText.trim()
     const accentWords = trimmedAccent ? trimmedAccent.split(/\s+/) : []
 
-    const headingFont = getResolvedFont(
-      "--font-heading",
-      '"Instrument Sans", "DM Sans", sans-serif'
-    )
     ctx.save()
     ctx.font = `500 ${fontSize}px ${headingFont}`
     ctx.textBaseline = "top"
@@ -814,10 +1023,6 @@ function drawPosterOverlays(
     }
 
     if (hasTitle) {
-      const headingFont = getResolvedFont(
-        "--font-heading",
-        '"Instrument Sans", sans-serif'
-      )
       ctx.font = `700 ${titleSize}px ${headingFont}`
       if ("letterSpacing" in ctx) {
         ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.06 * titleSize).toFixed(2)}px`
@@ -869,123 +1074,6 @@ function drawWebQrBadge(
   ctx.lineWidth = Math.max(1, scaleFactor)
   ctx.strokeStyle = "rgba(0, 0, 0, 0.1)"
   ctx.stroke()
-  ctx.restore()
-}
-
-function drawCapturedFromBadge(
-  ctx: CanvasRenderingContext2D,
-  state: StudioState,
-  width: number,
-  height: number,
-  faviconImg: HTMLImageElement | null
-) {
-  if (state.mode !== "web" || !state.showCapturedFrom) return
-
-  const scaleFactor = Math.min(width, height) / 500
-  const pillH = Math.round(30 * scaleFactor)
-  const padL = Math.round(8 * scaleFactor)
-  const padR = Math.round(12 * scaleFactor)
-  const gap = Math.round(6 * scaleFactor)
-  const iconSize = Math.round(16 * scaleFactor)
-  const arrowSize = Math.round(12 * scaleFactor)
-  const accentColor = resolveTabAccentColor(state)
-  const domainLabel = state.metadata?.domain || formatDisplayUrl(state.url)
-
-  const footerOffset = getPosterFooterStackOffset(state, scaleFactor, width)
-  const maxPillPct = state.webShowQr
-    ? footerOffset > 0
-      ? 0.72
-      : 0.64
-    : 0.86
-  const maxPillW = Math.round(width * maxPillPct)
-  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
-  const capturedFontSize = Math.round(10.5 * scaleFactor)
-  const domainFontSize = Math.round(11 * scaleFactor)
-
-  ctx.save()
-  ctx.font = `500 ${capturedFontSize}px ${sansFont}`
-  const capturedW = ctx.measureText("Captured from").width
-
-  ctx.font = `600 ${domainFontSize}px ${sansFont}`
-  const maxDomainW = Math.max(
-    24,
-    maxPillW - padL - iconSize - gap - capturedW - gap - gap - arrowSize - padR
-  )
-  const renderedDomain = truncateTextWithEllipsis(ctx, domainLabel, maxDomainW)
-  const domainW = ctx.measureText(renderedDomain).width
-
-  const pillW = Math.round(
-    padL + iconSize + gap + capturedW + gap + domainW + gap + arrowSize + padR
-  )
-  const pillX =
-    footerOffset > 0 && state.webShowQr
-      ? Math.round(width * 0.045)
-      : Math.round((width - pillW) / 2)
-  const pillY = Math.round(height * (1 - 0.045) - footerOffset - pillH)
-
-  // Drop shadow + dark pill fill
-  ctx.save()
-  ctx.shadowColor = "rgba(0, 0, 0, 0.28)"
-  ctx.shadowBlur = Math.round(18 * scaleFactor)
-  ctx.shadowOffsetY = Math.round(6 * scaleFactor)
-  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
-  ctx.fillStyle = "rgba(9, 9, 11, 0.9)"
-  ctx.fill()
-  ctx.restore()
-
-  // Hairline border
-  roundedRectPath(ctx, pillX, pillY, pillW, pillH, 999)
-  ctx.lineWidth = Math.max(1, scaleFactor)
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"
-  ctx.stroke()
-
-  // Favicon / brand icon
-  const iconX = pillX + padL
-  const iconY = pillY + (pillH - iconSize) / 2
-  if (faviconImg) {
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2)
-    ctx.clip()
-    drawContainedImage(ctx, faviconImg, iconX, iconY, iconSize, iconSize)
-    ctx.restore()
-  } else {
-    drawDefaultBrandIcon(ctx, iconX, iconY, iconSize, accentColor, false)
-  }
-
-  // "Captured from" muted label
-  const textX = iconX + iconSize + gap
-  ctx.font = `500 ${capturedFontSize}px ${sansFont}`
-  ctx.fillStyle = "rgba(255, 255, 255, 0.65)"
-  ctx.textAlign = "left"
-  ctx.textBaseline = "middle"
-  ctx.fillText("Captured from", textX, pillY + pillH / 2 + 0.5)
-
-  // Bold domain
-  const domainX = textX + capturedW + gap
-  ctx.font = `600 ${domainFontSize}px ${sansFont}`
-  ctx.fillStyle = "#FFFFFF"
-  ctx.fillText(renderedDomain, domainX, pillY + pillH / 2 + 0.5)
-
-  // External link arrow
-  const arrowCx = domainX + domainW + gap + arrowSize / 2
-  const arrowCy = pillY + pillH / 2
-  const as = arrowSize * 0.28
-  ctx.save()
-  ctx.globalAlpha = 0.75
-  ctx.strokeStyle = "#FFFFFF"
-  ctx.lineWidth = Math.max(1.1, 1.6 * scaleFactor)
-  ctx.lineCap = "round"
-  ctx.lineJoin = "round"
-  ctx.beginPath()
-  ctx.moveTo(arrowCx - as, arrowCy + as)
-  ctx.lineTo(arrowCx + as, arrowCy - as)
-  ctx.moveTo(arrowCx - as * 0.2, arrowCy - as)
-  ctx.lineTo(arrowCx + as, arrowCy - as)
-  ctx.lineTo(arrowCx + as, arrowCy + as * 0.2)
-  ctx.stroke()
-  ctx.restore()
-
   ctx.restore()
 }
 
@@ -1640,6 +1728,13 @@ async function drawWebMode(
     fy = Math.round(height * (1 + offY) - fh + 8)
     const r = Math.round(18 * scaleFactor)
     radii = [r, r, 0, 0]
+  } else if (state.webLayout === "duo") {
+    fw = Math.round(width * 0.78 * userScale)
+    fh = Math.round(height * 0.68 * userScale)
+    fx = Math.round(width * (0.45 + offX) - fw / 2)
+    fy = Math.round(height * (0.47 + offY) - fh / 2)
+    const r = Math.round(16 * scaleFactor)
+    radii = [r, r, r, r]
   } else {
     // floating
     fw = Math.round(width * 0.8 * userScale * 0.92)
@@ -1962,9 +2057,12 @@ async function drawWebMode(
 
   // Viewport content
   const viewH = fy + fh - contentTop
+  const themedScreenshotUrl = state.metadata?.screenshotUrl
+    ? `${state.metadata.screenshotUrl}${state.metadata.screenshotUrl.includes("?") ? "&" : "?"}theme=${isDarkChrome ? "dark" : "light"}`
+    : null
   const screenshotSrc =
     state.customScreenshotUrl ||
-    state.metadata?.screenshotUrl ||
+    themedScreenshotUrl ||
     state.metadata?.ogImageUrl ||
     null
 
@@ -2061,6 +2159,136 @@ async function drawWebMode(
   }
 
   ctx.restore()
+
+  if (state.webLayout === "duo") {
+    const mw = Math.round(width * 0.265 * userScale)
+    const mh = Math.round(height * 0.64 * userScale)
+    const mx = Math.round(width * (0.73 + offX) - mw / 2)
+    const my = Math.round(height * (0.59 + offY) - mh / 2)
+    const mr = Math.round(22 * scaleFactor)
+    const mRadii: [number, number, number, number] = [mr, mr, mr, mr]
+
+    if (state.frameShadow > 0) {
+      ctx.save()
+      ctx.shadowColor = `rgba(9, 9, 14, ${Math.min(0.75, 0.28 + (state.frameShadow / 100) * 0.45)})`
+      ctx.shadowBlur = Math.round(52 * scaleFactor * (state.frameShadow / 100))
+      ctx.shadowOffsetY = Math.round(22 * scaleFactor * (state.frameShadow / 100))
+      roundedRectPath(ctx, mx, my, mw, mh, mRadii)
+      ctx.fillStyle = "#111114"
+      ctx.fill()
+      ctx.restore()
+    }
+
+    ctx.save()
+    roundedRectPath(ctx, mx, my, mw, mh, mRadii)
+    ctx.clip()
+
+    ctx.fillStyle = isDarkChrome ? "#09090B" : "#FFFFFF"
+    ctx.fillRect(mx, my, mw, mh)
+
+    const mHeaderH = Math.round(32 * scaleFactor)
+    ctx.fillStyle = isDarkChrome ? "#121216" : "#FAFAFA"
+    ctx.fillRect(mx, my, mw, mHeaderH)
+
+    // Dynamic island pill
+    const islandW = Math.round(36 * scaleFactor)
+    const islandH = Math.round(6 * scaleFactor)
+    roundedRectPath(
+      ctx,
+      mx + (mw - islandW) / 2,
+      my + Math.round(6 * scaleFactor),
+      islandW,
+      islandH,
+      999
+    )
+    ctx.fillStyle = "#09090B"
+    ctx.fill()
+
+    // Mobile URL pill
+    const mPillW = Math.max(40, mw - Math.round(16 * scaleFactor))
+    const mPillH = Math.round(12 * scaleFactor)
+    const mPillX = mx + (mw - mPillW) / 2
+    const mPillY = my + Math.round(15 * scaleFactor)
+    roundedRectPath(ctx, mPillX, mPillY, mPillW, mPillH, 999)
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255,255,255,0.08)"
+      : "rgba(0,0,0,0.06)"
+    ctx.fill()
+
+    ctx.font = `500 ${Math.round(7.5 * scaleFactor)}px "DM Sans", sans-serif`
+    ctx.fillStyle = isDarkChrome ? "#D4D4D8" : "#3F3F46"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText(
+      truncateTextWithEllipsis(ctx, displayUrl, mPillW - 8),
+      mx + mw / 2,
+      mPillY + mPillH / 2 + 0.5
+    )
+    ctx.textAlign = "left"
+
+    const mFooterH = Math.round(12 * scaleFactor)
+    const mViewY = my + mHeaderH
+    const mViewH = Math.max(20, mh - mHeaderH - mFooterH)
+
+    const generatedMobileShotUrl = state.metadata?.screenshotUrl
+      ? `${state.metadata.screenshotUrl}${state.metadata.screenshotUrl.includes("?") ? "&" : "?"}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
+      : null
+    const mobileImg =
+      (state.customMobileScreenshotUrl
+        ? await loadImageSafe(state.customMobileScreenshotUrl)
+        : null) ??
+      (generatedMobileShotUrl
+        ? await loadImageSafe(generatedMobileShotUrl)
+        : null) ??
+      shotImg
+    if (mobileImg) {
+      drawCoverImage(ctx, mobileImg, mx, mViewY, mw, mViewH, true)
+    } else {
+      ctx.fillStyle = isDarkChrome ? "#0B0B0E" : "#FFFFFF"
+      ctx.fillRect(mx, mViewY, mw, mViewH)
+      const mPad = Math.round(10 * scaleFactor)
+      ctx.font = `700 ${Math.round(10 * scaleFactor)}px "Instrument Sans", sans-serif`
+      ctx.fillStyle = isDarkChrome ? "#FAFAFA" : "#09090B"
+      ctx.textBaseline = "top"
+      const mTitleLines = wrapLines(
+        ctx,
+        state.metadata?.title || displayUrl,
+        mw - mPad * 2,
+        3
+      )
+      mTitleLines.forEach((line, idx) => {
+        ctx.fillText(
+          line,
+          mx + mPad,
+          mViewY + Math.round(24 * scaleFactor) + idx * Math.round(13 * scaleFactor)
+        )
+      })
+    }
+
+    // Bottom home bar indicator
+    const homeW = Math.round(38 * scaleFactor)
+    const homeH = Math.round(3.5 * scaleFactor)
+    roundedRectPath(
+      ctx,
+      mx + (mw - homeW) / 2,
+      my + mh - Math.round(7 * scaleFactor),
+      homeW,
+      homeH,
+      999
+    )
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255,255,255,0.32)"
+      : "rgba(0,0,0,0.25)"
+    ctx.fill()
+
+    // Outer phone bezel stroke
+    ctx.lineWidth = Math.max(2, Math.round(3 * scaleFactor))
+    ctx.strokeStyle = isDarkChrome ? "#27272A" : "#18181B"
+    roundedRectPath(ctx, mx, my, mw, mh, mRadii)
+    ctx.stroke()
+
+    ctx.restore()
+  }
 }
 
 function drawCoverOrEmeraldMesh(
@@ -2238,6 +2466,7 @@ async function drawSocialMode(
   const initial = displayName.charAt(0).toUpperCase() || "O"
   const handleText = state.socialHandle || "@Oliviar_"
   const displayUrl = formatDisplayUrl(state.url)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
 
   const cardW = isPill
     ? Math.round(width * 0.86 * userScale)
@@ -2294,8 +2523,12 @@ async function drawSocialMode(
   const cardH = isPill
     ? Math.round(Math.min(height * 0.42, 195 * scaleFactor))
     : ctaRelY + ctaH + pad
-  const cx = Math.round((width - cardW) / 2)
-  const cy = Math.round((height - cardH) / 2)
+  const cx = Math.round(
+    (width - cardW) / 2 + ((state.frameOffsetX ?? 0) / 100) * width
+  )
+  const cy = Math.round(
+    (height - cardH) / 2 + ((state.frameOffsetY ?? 0) / 100) * height
+  )
   const cardR = isPill ? Math.round(cardH / 2) : Math.round(28 * scaleFactor)
 
   // Drop shadow
@@ -2346,7 +2579,7 @@ async function drawSocialMode(
 
     ctx.textBaseline = "top"
     ctx.textAlign = "left"
-    ctx.font = `700 ${Math.round(18 * scaleFactor)}px "Instrument Sans", sans-serif`
+    ctx.font = `700 ${Math.round(18 * scaleFactor)}px ${headingFont}`
     ctx.fillStyle = fg
     const badgeR = Math.round(7.5 * scaleFactor)
     const badgeSpace = state.socialVerified ? badgeR * 2 + Math.round(6 * scaleFactor) : 0
@@ -2506,7 +2739,7 @@ async function drawSocialMode(
     const textMaxW = Math.max(80, innerW)
     ctx.textBaseline = "top"
     ctx.textAlign = "left"
-    ctx.font = `700 ${Math.round(17 * scaleFactor)}px "Instrument Sans", sans-serif`
+    ctx.font = `700 ${Math.round(17 * scaleFactor)}px ${headingFont}`
     ctx.fillStyle = fg
 
     const badgeR = Math.round(7.5 * scaleFactor)
@@ -2645,6 +2878,363 @@ async function drawSocialMode(
   ctx.restore()
 }
 
+function drawCodeMode(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  const minDim = Math.min(width, height)
+  const userScale = state.frameScale / 100
+  const scaleFactor = userScale * (minDim / 500)
+  const isDark = state.codeTheme !== "light"
+  const accentColor = resolveTabAccentColor(state)
+  const displayUrl = formatDisplayUrl(state.url)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
+  const monoFont = getResolvedFont(
+    "--font-geist-mono",
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  )
+  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+
+  const offX = ((state.frameOffsetX ?? 0) / 100) * width
+  const offY = ((state.frameOffsetY ?? 0) / 100) * height
+
+  if (state.codeCardStyle === "changelog") {
+    const entries = parseChangelogItems(state.changelogItems)
+    const cardW = Math.round(Math.min(width * 0.86 * userScale, 440 * scaleFactor))
+    const pad = Math.round(20 * scaleFactor)
+    const minRowH = Math.round(32 * scaleFactor)
+    const rowPadY = Math.round(7 * scaleFactor)
+    const textLineH = Math.round(16 * scaleFactor)
+    const rowGap = Math.round(8 * scaleFactor)
+    const headerH = Math.round(74 * scaleFactor)
+
+    const entryLayouts = entries.map((entry) => {
+      ctx.font = `700 ${Math.round(9 * scaleFactor)}px ${monoFont}`
+      const tagW = Math.round(ctx.measureText(entry.tag).width + 12 * scaleFactor)
+      const tagXOffset = pad + Math.round(10 * scaleFactor)
+      const textXOffset = tagXOffset + tagW + Math.round(10 * scaleFactor)
+      const maxTextW = Math.max(
+        40,
+        cardW - pad - Math.round(10 * scaleFactor) - textXOffset
+      )
+      ctx.font = `500 ${Math.round(11.5 * scaleFactor)}px ${sansFont}`
+      const lines = wrapLines(ctx, entry.text, maxTextW, Number.POSITIVE_INFINITY)
+      const safeLines = lines.length > 0 ? lines : [entry.text]
+      const rowH = Math.max(
+        minRowH,
+        safeLines.length * textLineH + rowPadY * 2
+      )
+      return { entry, tagW, lines: safeLines, rowH }
+    })
+
+    const totalRowsH = entryLayouts.reduce((sum, item) => sum + item.rowH, 0)
+    const cardH =
+      pad +
+      headerH +
+      totalRowsH +
+      Math.max(0, entryLayouts.length - 1) * rowGap +
+      pad
+    const cx = Math.round((width - cardW) / 2 + offX)
+    const cy = Math.round((height - cardH) / 2 + offY)
+    const cardR = Math.round(24 * scaleFactor)
+
+    if (state.frameShadow > 0) {
+      ctx.save()
+      ctx.shadowColor = `rgba(0, 0, 0, ${0.18 + (state.frameShadow / 100) * 0.42})`
+      ctx.shadowBlur = Math.round(42 * scaleFactor * (state.frameShadow / 100))
+      ctx.shadowOffsetY = Math.round(18 * scaleFactor * (state.frameShadow / 100))
+      roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+      ctx.fillStyle = isDark ? "#0D0D11" : "#FFFFFF"
+      ctx.fill()
+      ctx.restore()
+    }
+
+    ctx.save()
+    roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+    ctx.clip()
+
+    ctx.fillStyle = isDark ? "#0D0D11" : "#FFFFFF"
+    ctx.fillRect(cx, cy, cardW, cardH)
+
+    const verText = state.changelogVersion || "v2.4.0"
+    ctx.font = `700 ${Math.round(11 * scaleFactor)}px ${monoFont}`
+    const verW = Math.round(ctx.measureText(verText).width + 20 * scaleFactor)
+    const verH = Math.round(22 * scaleFactor)
+    roundedRectPath(ctx, cx + pad, cy + pad, verW, verH, 999)
+    ctx.fillStyle = accentColor
+    ctx.fill()
+    ctx.fillStyle = "#FFFFFF"
+    ctx.textBaseline = "middle"
+    ctx.fillText(
+      verText,
+      cx + pad + Math.round(10 * scaleFactor),
+      cy + pad + verH / 2 + 0.5
+    )
+
+    ctx.font = `500 ${Math.round(11 * scaleFactor)}px ${sansFont}`
+    ctx.fillStyle = isDark ? "rgba(250,250,250,0.6)" : "rgba(9,9,11,0.6)"
+    ctx.fillText(
+      state.changelogDate || "Just Shipped",
+      cx + pad + verW + Math.round(8 * scaleFactor),
+      cy + pad + verH / 2 + 0.5
+    )
+
+    ctx.font = `700 ${Math.round(18 * scaleFactor)}px ${headingFont}`
+    ctx.fillStyle = isDark ? "#FAFAFA" : "#09090B"
+    ctx.textBaseline = "top"
+    const titleText = truncateTextWithEllipsis(
+      ctx,
+      state.changelogTitle || "Interactive Stage & Duo Device Showcases",
+      cardW - pad * 2
+    )
+    ctx.fillText(titleText, cx + pad, cy + pad + verH + Math.round(12 * scaleFactor))
+
+    let rowY = cy + pad + headerH
+    entryLayouts.forEach(({ entry, tagW, lines, rowH }) => {
+      roundedRectPath(ctx, cx + pad, rowY, cardW - pad * 2, rowH, Math.round(11 * scaleFactor))
+      ctx.fillStyle = isDark ? "rgba(255,255,255,0.04)" : "rgba(24,24,27,0.05)"
+      ctx.fill()
+
+      ctx.font = `700 ${Math.round(9 * scaleFactor)}px ${monoFont}`
+      const tagH = Math.round(18 * scaleFactor)
+      const tagX = cx + pad + Math.round(10 * scaleFactor)
+      const tagY =
+        lines.length === 1
+          ? rowY + (rowH - tagH) / 2
+          : rowY + rowPadY + Math.max(0, (textLineH - tagH) / 2)
+      roundedRectPath(ctx, tagX, tagY, tagW, tagH, Math.round(5 * scaleFactor))
+      ctx.fillStyle = entry.bg
+      ctx.fill()
+      ctx.fillStyle = entry.color
+      ctx.textBaseline = "middle"
+      ctx.fillText(
+        entry.tag,
+        tagX + Math.round(6 * scaleFactor),
+        tagY + tagH / 2 + 0.5
+      )
+
+      ctx.font = `500 ${Math.round(11.5 * scaleFactor)}px ${sansFont}`
+      ctx.fillStyle = isDark ? "rgba(250,250,250,0.9)" : "rgba(9,9,11,0.9)"
+      const textX = tagX + tagW + Math.round(10 * scaleFactor)
+      const blockH = lines.length * textLineH
+      const startTextY = rowY + (rowH - blockH) / 2 + textLineH / 2
+      lines.forEach((line, lineIdx) => {
+        ctx.fillText(line, textX, startTextY + lineIdx * textLineH + 0.5)
+      })
+      rowY += rowH + rowGap
+    })
+
+    ctx.lineWidth = Math.max(1, scaleFactor)
+    ctx.strokeStyle = isDark ? "rgba(255,255,255,0.14)" : "rgba(9,9,11,0.1)"
+    roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
+
+  const codeLines = (state.codeContent || "").split("\n").slice(0, 16)
+  const cardW = Math.round(Math.min(width * 0.88 * userScale, 450 * scaleFactor))
+  const headerH = Math.round(36 * scaleFactor)
+  const footerH = Math.round(26 * scaleFactor)
+  const pad = Math.round(16 * scaleFactor)
+  const lineH = Math.round(19 * scaleFactor)
+  const lineNumW = state.codeShowLineNumbers ? Math.round(26 * scaleFactor) : 0
+  const maxCodeLineW = Math.max(60, cardW - pad * 2 - lineNumW)
+
+  ctx.font = `400 ${Math.round(11.5 * scaleFactor)}px ${monoFont}`
+  type VisualCodeSegment = { text: string; color: string }
+  type VisualCodeRow = {
+    lineNumber: number | null
+    segments: VisualCodeSegment[]
+  }
+  const visualRows: VisualCodeRow[] = []
+
+  codeLines.forEach((line, idx) => {
+    const tokens = tokenizeCodeLine(line)
+    let currentSegments: VisualCodeSegment[] = []
+    let currentW = 0
+    let isFirstVisualRow = true
+
+    const flushRow = () => {
+      visualRows.push({
+        lineNumber: isFirstVisualRow ? idx + 1 : null,
+        segments: currentSegments,
+      })
+      currentSegments = []
+      currentW = 0
+      isFirstVisualRow = false
+    }
+
+    for (const tok of tokens) {
+      const color = getTokenColor(tok.kind, isDark)
+      let remaining = tok.text
+      while (remaining.length > 0) {
+        const fullW = ctx.measureText(remaining).width
+        if (currentW + fullW <= maxCodeLineW) {
+          currentSegments.push({ text: remaining, color })
+          currentW += fullW
+          break
+        }
+        if (currentW > 0 && fullW <= maxCodeLineW) {
+          flushRow()
+          continue
+        }
+        // Slice as many characters as fit on the current visual line
+        let fitCount = 0
+        for (let c = 1; c <= remaining.length; c++) {
+          if (
+            currentW + ctx.measureText(remaining.slice(0, c)).width <=
+            maxCodeLineW
+          ) {
+            fitCount = c
+          } else {
+            break
+          }
+        }
+        if (fitCount === 0) {
+          if (currentW > 0) {
+            flushRow()
+            continue
+          }
+          fitCount = 1
+        }
+        const chunk = remaining.slice(0, fitCount)
+        currentSegments.push({ text: chunk, color })
+        remaining = remaining.slice(fitCount)
+        if (remaining.length > 0) {
+          flushRow()
+        } else {
+          currentW += ctx.measureText(chunk).width
+        }
+      }
+    }
+    if (currentSegments.length > 0 || isFirstVisualRow) {
+      flushRow()
+    }
+  })
+
+  const bodyH = pad * 2 + Math.max(1, visualRows.length) * lineH
+  const cardH = headerH + bodyH + footerH
+  const cx = Math.round((width - cardW) / 2 + offX)
+  const cy = Math.round((height - cardH) / 2 + offY)
+  const cardR = Math.round(20 * scaleFactor)
+
+  if (state.frameShadow > 0) {
+    ctx.save()
+    ctx.shadowColor = `rgba(0, 0, 0, ${0.18 + (state.frameShadow / 100) * 0.42})`
+    ctx.shadowBlur = Math.round(42 * scaleFactor * (state.frameShadow / 100))
+    ctx.shadowOffsetY = Math.round(18 * scaleFactor * (state.frameShadow / 100))
+    roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+    ctx.fillStyle = isDark ? "#0B0B0F" : "#FFFFFF"
+    ctx.fill()
+    ctx.restore()
+  }
+
+  ctx.save()
+  roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+  ctx.clip()
+
+  ctx.fillStyle = isDark ? "#0B0B0F" : "#FFFFFF"
+  ctx.fillRect(cx, cy, cardW, cardH)
+
+  ctx.fillStyle = isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"
+  ctx.fillRect(cx, cy, cardW, headerH)
+  const dotColors = ["#FF5F57", "#FEBC2E", "#28C840"]
+  const dotR = Math.max(3, Math.round(4.5 * scaleFactor))
+  dotColors.forEach((col, idx) => {
+    ctx.beginPath()
+    ctx.arc(
+      cx + pad + dotR + idx * Math.round(14 * scaleFactor),
+      cy + headerH / 2,
+      dotR,
+      0,
+      Math.PI * 2
+    )
+    ctx.fillStyle = col
+    ctx.fill()
+  })
+
+  ctx.font = `500 ${Math.round(11 * scaleFactor)}px ${monoFont}`
+  ctx.fillStyle = isDark ? "rgba(244,244,245,0.8)" : "rgba(24,24,27,0.8)"
+  ctx.textAlign = "center"
+  ctx.textBaseline = "middle"
+  ctx.fillText(
+    state.codeFilename || "prettylink.config.ts",
+    cx + cardW / 2,
+    cy + headerH / 2 + 0.5
+  )
+  ctx.textAlign = "left"
+
+  ctx.font = `400 ${Math.round(11.5 * scaleFactor)}px ${monoFont}`
+  visualRows.forEach((row, rowIdx) => {
+    const lineY = cy + headerH + pad + rowIdx * lineH + lineH / 2
+    let cursorX = cx + pad
+    if (state.codeShowLineNumbers) {
+      if (row.lineNumber !== null) {
+        ctx.fillStyle = isDark
+          ? "rgba(244,244,245,0.32)"
+          : "rgba(24,24,27,0.35)"
+        ctx.fillText(String(row.lineNumber), cursorX, lineY)
+      }
+      cursorX += lineNumW
+    }
+    for (const seg of row.segments) {
+      ctx.fillStyle = seg.color
+      ctx.fillText(seg.text, cursorX, lineY)
+      cursorX += ctx.measureText(seg.text).width
+    }
+  })
+
+  const langMeta =
+    CODE_LANGUAGES.find((l) => l.id === state.codeLanguage) ??
+    CODE_LANGUAGES[0]!
+  const footerY = cy + cardH - footerH
+  ctx.fillStyle = isDark ? "rgba(255,255,255,0.02)" : "#FAFAFA"
+  ctx.fillRect(cx, footerY, cardW, footerH)
+  ctx.font = `500 ${Math.round(9.5 * scaleFactor)}px ${monoFont}`
+  ctx.fillStyle = isDark ? "rgba(244,244,245,0.5)" : "rgba(24,24,27,0.5)"
+  ctx.fillText(langMeta.label, cx + pad, footerY + footerH / 2 + 0.5)
+  ctx.textAlign = "right"
+  ctx.fillText(displayUrl, cx + cardW - pad, footerY + footerH / 2 + 0.5)
+  ctx.textAlign = "left"
+
+  ctx.lineWidth = Math.max(1, scaleFactor)
+  ctx.strokeStyle = isDark ? "rgba(255,255,255,0.14)" : "rgba(9,9,11,0.1)"
+  roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawSpotlightOverlay(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  if (!state.showSpotlight) return
+  const minDim = Math.min(width, height)
+  const cx = ((state.spotlightX ?? 50) / 100) * width
+  const cy = ((state.spotlightY ?? 50) / 100) * height
+  const r = ((state.spotlightRadius ?? 28) / 100) * minDim
+  const dimAlpha = Math.min(0.88, (state.spotlightDim ?? 55) / 100)
+
+  ctx.save()
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.78, cx, cy, r)
+  grad.addColorStop(0, "rgba(0, 0, 0, 0)")
+  grad.addColorStop(1, `rgba(0, 0, 0, ${dimAlpha})`)
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, width, height)
+
+  ctx.beginPath()
+  ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2)
+  ctx.lineWidth = Math.max(1.2, minDim / 450)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.38)"
+  ctx.stroke()
+  ctx.restore()
+}
+
 export async function renderStudioToCanvas(
   state: StudioState,
   options: { scale: ExportScale; format: ExportFormat }
@@ -2679,22 +3269,36 @@ export async function renderStudioToCanvas(
     faviconCandidates.length > 0 &&
     (state.showCornerIcon ||
       (state.mode === "web" &&
-        (state.showCapturedFrom ||
-          (state.browserChrome !== "mobile" &&
-            (state.webLayout === "tab" || state.browserChrome === "chrome")))))
+        state.browserChrome !== "mobile" &&
+        (state.webLayout === "tab" || state.browserChrome === "chrome")))
   const faviconImg = needsFavicon
     ? await loadFaviconWithBudget(faviconCandidates)
     : null
 
   drawPosterOverlays(ctx, state, logicalW, logicalH, faviconImg)
 
+  ctx.save()
+  if (state.frameTilt && state.frameTilt !== "flat") {
+    const [a, b, c, d] = getFrameTiltMatrix(state.frameTilt)
+    ctx.translate(logicalW / 2, logicalH / 2)
+    ctx.transform(a, b, c, d, 0, 0)
+    ctx.translate(-logicalW / 2, -logicalH / 2)
+  }
+
   if (state.mode === "web") {
     await drawWebMode(ctx, state, logicalW, logicalH, faviconImg)
-    drawWebQrBadge(ctx, state, logicalW, logicalH)
-    drawCapturedFromBadge(ctx, state, logicalW, logicalH, faviconImg)
-  } else {
+  } else if (state.mode === "social") {
     await drawSocialMode(ctx, state, logicalW, logicalH)
+  } else {
+    drawCodeMode(ctx, state, logicalW, logicalH)
   }
+  ctx.restore()
+
+  if (state.mode === "web") {
+    drawWebQrBadge(ctx, state, logicalW, logicalH)
+  }
+  drawCalloutBadge(ctx, state, logicalW, logicalH)
+  drawSpotlightOverlay(ctx, state, logicalW, logicalH)
 
   ctx.restore()
   return canvas
@@ -2781,4 +3385,74 @@ export async function copyStudioImageToClipboard(
       "image/png": blob,
     }),
   ])
+}
+
+export async function downloadBatchSocialKitZip(
+  state: StudioState,
+  options: {
+    ratioIds: string[]
+    format: ExportFormat
+    scale: ExportScale
+    baseFilename?: string
+    onProgress?: (completed: number, total: number) => void
+  }
+): Promise<number> {
+  const presets = ASPECT_RATIOS.filter(
+    (r) => r.id !== "custom" && options.ratioIds.includes(r.id)
+  )
+  if (presets.length === 0) {
+    throw new Error("Select at least one aspect ratio for the batch export.")
+  }
+
+  const cleanHost = formatDisplayUrl(state.url)
+    .replace(/[^a-z0-9.-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+  const rawBaseName =
+    options.baseFilename?.trim() || `prettylink-${cleanHost || "shot"}`
+  const baseName = sanitizeZipEntryName(rawBaseName)
+    .replace(/[\/\\]+/g, "-")
+    .replace(/^-+|-+$/g, "") || `prettylink-${cleanHost || "shot"}`
+  const ext = options.format === "jpeg" ? "jpg" : options.format
+
+  const entries: ZipFileEntry[] = []
+  const total = presets.length
+  options.onProgress?.(0, total)
+
+  for (let i = 0; i < presets.length; i++) {
+    const preset = presets[i]!
+    const ratioState: StudioState = {
+      ...state,
+      aspectRatioId: preset.id,
+      customWidth: preset.width,
+      customHeight: preset.height,
+    }
+    const blob = await exportStudioBlob(ratioState, {
+      format: options.format,
+      scale: options.scale,
+    })
+    const buffer = await blob.arrayBuffer()
+    const outW = preset.width * options.scale
+    const outH = preset.height * options.scale
+    entries.push({
+      name: `${baseName}-${preset.id}-${outW}x${outH}.${ext}`,
+      data: new Uint8Array(buffer),
+    })
+    options.onProgress?.(i + 1, total)
+  }
+
+  const zipBlob = createZipBlob(entries)
+  const objectUrl = URL.createObjectURL(zipBlob)
+  try {
+    const a = document.createElement("a")
+    a.href = objectUrl
+    a.download = `${baseName}-social-kit.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  }
+
+  return entries.length
 }

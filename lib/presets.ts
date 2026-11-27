@@ -1,10 +1,94 @@
 import type {
   AspectRatioPreset,
   BackgroundPattern,
+  FontStyleId,
   GradientPreset,
+  StudioMode,
   StudioState,
   UnsplashPhoto,
 } from "@/lib/studio-types"
+
+export const FONT_STYLES: Array<{
+  id: FontStyleId
+  label: string
+  previewSample: string
+}> = [
+  { id: "instrument", label: "Instrument", previewSample: "Aa" },
+  { id: "geist", label: "Geist", previewSample: "Aa" },
+  { id: "mono", label: "Mono", previewSample: "01" },
+  { id: "editorial", label: "Editorial", previewSample: "Aa" },
+]
+
+export const CALLOUT_PRESET_CHIPS: string[] = [
+  "New Release",
+  "Live Demo",
+  "Open Source",
+  "Featured",
+]
+
+const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+
+export function resolveTabAccentColor(state: StudioState): string {
+  const custom =
+    typeof state.tabAccentColor === "string"
+      ? state.tabAccentColor.trim()
+      : ""
+  if (HEX_COLOR_RE.test(custom)) return custom
+
+  const theme =
+    typeof state.metadata?.themeColor === "string"
+      ? state.metadata.themeColor.trim()
+      : ""
+  if (theme && HEX_COLOR_RE.test(theme)) return theme
+
+  if (state.backgroundType === "color") {
+    const rawBgHex =
+      state.colorFillMode === "solid" ? state.solidColor : state.gradientFrom
+    const bgHex = typeof rawBgHex === "string" ? rawBgHex.trim() : ""
+    if (HEX_COLOR_RE.test(bgHex)) return bgHex
+  }
+
+  return "#38A869"
+}
+
+export function parseSocialStats(
+  metrics: string
+): Array<{ value: string; label: string }> {
+  if (!metrics || !metrics.trim()) return []
+
+  const parts = metrics
+    .split(/[·|]|(?<!\d),|,(?!\d)/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  return parts.slice(0, 3).map((part) => {
+    const tokens = part.split(/\s+/).filter(Boolean)
+    if (tokens.length === 1) {
+      return {
+        value: tokens[0]!,
+        label: "Metric",
+      }
+    }
+    return {
+      value: tokens[0]!,
+      label: tokens.slice(1).join(" "),
+    }
+  })
+}
+
+export function getFontStyleCssFamily(fontStyle?: FontStyleId): string {
+  switch (fontStyle) {
+    case "geist":
+      return 'var(--font-geist-sans), "Geist", "DM Sans", sans-serif'
+    case "mono":
+      return 'var(--font-geist-mono), "Geist Mono", ui-monospace, SFMono-Regular, monospace'
+    case "editorial":
+      return 'Georgia, "Times New Roman", Times, serif'
+    case "instrument":
+    default:
+      return 'var(--font-heading), "Instrument Sans", "DM Sans", sans-serif'
+  }
+}
 
 export const BACKGROUND_PATTERNS: Array<{
   id: BackgroundPattern
@@ -556,15 +640,42 @@ export const CURATED_UNSPLASH_PHOTOS: UnsplashPhoto[] = [
 export interface QuickTemplate {
   id: string
   name: string
-  mode: "web" | "social"
+  mode: StudioMode
   swatch: string
   patch: Partial<StudioState>
+}
+
+export const FRAME_TILT_PRESETS: Array<{
+  id: "flat" | "tilt-left" | "tilt-right" | "float-up"
+  label: string
+  matrix: [number, number, number, number]
+}> = [
+  { id: "flat", label: "Flat", matrix: [1, 0, 0, 1] },
+  { id: "tilt-left", label: "Tilt Left", matrix: [0.95, -0.055, 0.04, 0.96] },
+  { id: "tilt-right", label: "Tilt Right", matrix: [0.95, 0.055, -0.04, 0.96] },
+  { id: "float-up", label: "Float Up", matrix: [0.96, -0.025, -0.045, 0.94] },
+]
+
+export function getFrameTiltMatrix(
+  tilt: StudioState["frameTilt"]
+): [number, number, number, number] {
+  return (
+    FRAME_TILT_PRESETS.find((p) => p.id === tilt)?.matrix ?? [1, 0, 0, 1]
+  )
+}
+
+export function getFrameTiltCssTransform(
+  tilt: StudioState["frameTilt"]
+): string | undefined {
+  if (!tilt || tilt === "flat") return undefined
+  const [a, b, c, d] = getFrameTiltMatrix(tilt)
+  return `matrix(${a}, ${b}, ${c}, ${d}, 0, 0)`
 }
 
 export const QUICK_TEMPLATES: QuickTemplate[] = [
   {
     id: "lerhem-web",
-    name: "Lerhem Offset",
+    name: "Offset",
     mode: "web",
     swatch: "linear-gradient(135deg, #7C3AED 0%, #3B82F6 100%)",
     patch: {
@@ -651,7 +762,6 @@ export const QUICK_TEMPLATES: QuickTemplate[] = [
       browserChrome: "mobile",
       chromeTheme: "dark",
       webShowQr: true,
-      showCapturedFrom: true,
       metadata: null,
     },
   },
@@ -793,4 +903,411 @@ export const QUICK_TEMPLATES: QuickTemplate[] = [
       socialShowQr: false,
     },
   },
+  {
+    id: "duo-showcase",
+    name: "Duo Device",
+    mode: "web",
+    swatch: "linear-gradient(135deg, #312E81 0%, #0EA5E9 100%)",
+    patch: {
+      mode: "web",
+      aspectRatioId: "twitter-16-9",
+      backgroundType: "color",
+      colorFillMode: "gradient",
+      gradientId: "ocean-glass",
+      gradientFrom: "#1E1B4B",
+      gradientVia: "#1D4ED8",
+      gradientTo: "#0EA5E9",
+      gradientAngle: 135,
+      bgPattern: "dots",
+      bgPatternOpacity: 18,
+      borderStyle: "round",
+      webLayout: "duo",
+      browserChrome: "chrome",
+      chromeTheme: "dark",
+      frameTilt: "tilt-left",
+    },
+  },
+  {
+    id: "release-changelog",
+    name: "Release Notes",
+    mode: "code",
+    swatch: "linear-gradient(135deg, #0F172A 0%, #3B82F6 100%)",
+    patch: {
+      mode: "code",
+      aspectRatioId: "twitter-16-9",
+      backgroundType: "color",
+      colorFillMode: "gradient",
+      gradientId: "midnight-slate",
+      gradientFrom: "#09090B",
+      gradientVia: "#1E1B4B",
+      gradientTo: "#1D4ED8",
+      gradientAngle: 140,
+      bgPattern: "grid",
+      bgPatternOpacity: 16,
+      borderStyle: "round",
+      codeCardStyle: "changelog",
+      codeTheme: "dark",
+    },
+  },
 ]
+
+export const DEFAULT_BATCH_RATIO_IDS: string[] = [
+  "square-hd",
+  "twitter-16-9",
+  "og-card",
+  "instagram-4-5",
+  "story-9-16",
+]
+
+export interface CustomPreset {
+  id: string
+  name: string
+  mode: StudioMode
+  swatch: string
+  createdAt: number
+  patch: Partial<StudioState>
+}
+
+export const CUSTOM_PRESETS_STORAGE_KEY = "prettylink:custom-presets:v1"
+
+export function computeStyleSwatch(state: StudioState): string {
+  if (state.backgroundType === "none") {
+    return "linear-gradient(135deg, #27272A 0%, #71717A 100%)"
+  }
+  if (
+    state.backgroundType === "color" &&
+    state.colorFillMode === "solid" &&
+    state.solidColor
+  ) {
+    return `linear-gradient(135deg, ${state.solidColor} 0%, ${state.solidColor} 100%)`
+  }
+  const from = state.gradientFrom || "#4F46E5"
+  const via = state.gradientVia?.trim()
+  const to = state.gradientTo || "#06B6D4"
+  const angle = Number.isFinite(state.gradientAngle) ? state.gradientAngle : 135
+  return via
+    ? `linear-gradient(${angle}deg, ${from} 0%, ${via} 50%, ${to} 100%)`
+    : `linear-gradient(${angle}deg, ${from} 0%, ${to} 100%)`
+}
+
+export function resolveUnsplashPhotoUrl(photoId?: string): string {
+  if (!photoId) return ""
+  const found = CURATED_UNSPLASH_PHOTOS.find((p) => p.id === photoId)
+  if (found) return found.exportUrl ?? found.fullUrl
+  if (/^photo-[a-z0-9-]+$/i.test(photoId)) {
+    return `https://images.unsplash.com/${photoId}?auto=format&fit=crop&w=1600&q=85`
+  }
+  return ""
+}
+
+/**
+ * Extracts style and layout properties for a custom preset while preserving
+ * the user's current target URL, fetched metadata, and custom uploaded assets.
+ */
+export function extractStylePresetPatch(
+  state: StudioState
+): Partial<StudioState> {
+  const isUnsplash = state.backgroundType === "unsplash"
+  const unsplashUrl = isUnsplash
+    ? state.backgroundImageUrl && !state.backgroundImageUrl.startsWith("data:")
+      ? state.backgroundImageUrl
+      : resolveUnsplashPhotoUrl(state.unsplashPhotoId)
+    : ""
+  return {
+    mode: state.mode,
+    aspectRatioId: state.aspectRatioId,
+    customWidth: state.customWidth,
+    customHeight: state.customHeight,
+    backgroundType:
+      state.backgroundType === "image" ? "color" : state.backgroundType,
+    colorFillMode: state.colorFillMode,
+    gradientId: state.gradientId,
+    gradientFrom: state.gradientFrom,
+    gradientVia: state.gradientVia,
+    gradientTo: state.gradientTo,
+    gradientAngle: state.gradientAngle,
+    solidColor: state.solidColor,
+    noiseOverlay: state.noiseOverlay,
+    bgPattern: state.bgPattern,
+    bgPatternOpacity: state.bgPatternOpacity,
+    backgroundImageUrl: unsplashUrl,
+    unsplashPhotoId: isUnsplash ? state.unsplashPhotoId : "",
+    unsplashPhotographer: isUnsplash ? state.unsplashPhotographer : "",
+    bgBlur: state.bgBlur,
+    bgDim: state.bgDim,
+    borderStyle: state.borderStyle,
+    webLayout: state.webLayout,
+    browserChrome: state.browserChrome,
+    chromeTheme: state.chromeTheme,
+    frameScale: state.frameScale,
+    frameOffsetX: state.frameOffsetX,
+    frameOffsetY: state.frameOffsetY,
+    frameShadow: state.frameShadow,
+    frameTilt: state.frameTilt,
+    showNavButtons: state.showNavButtons,
+    webShowQr: state.webShowQr,
+    showSpotlight: state.showSpotlight,
+    spotlightX: state.spotlightX,
+    spotlightY: state.spotlightY,
+    spotlightRadius: state.spotlightRadius,
+    spotlightDim: state.spotlightDim,
+    tabAccentColor: state.tabAccentColor,
+    showCornerIcon: state.showCornerIcon,
+    cornerIconPosition: state.cornerIconPosition,
+    showPosterHeader: state.showPosterHeader,
+    posterHeadlineAlign: state.posterHeadlineAlign,
+    posterHeadlineSize: state.posterHeadlineSize,
+    showPosterFooter: state.showPosterFooter,
+    fontStyle: state.fontStyle,
+    showCalloutBadge: state.showCalloutBadge,
+    calloutText: state.calloutText,
+    calloutPosition: state.calloutPosition,
+    socialCardStyle: state.socialCardStyle,
+    socialCardTheme: state.socialCardTheme,
+    socialVerified: state.socialVerified,
+    socialShowQr: state.socialShowQr,
+    codeCardStyle: state.codeCardStyle,
+    codeTheme: state.codeTheme,
+    codeLanguage: state.codeLanguage,
+    codeShowLineNumbers: state.codeShowLineNumbers,
+  }
+}
+
+const PRESET_PATCH_SCHEMA: Record<
+  string,
+  "string" | "number" | "boolean" | ReadonlySet<string>
+> = {
+  mode: new Set(["web", "social", "code"]),
+  aspectRatioId: "string",
+  customWidth: "number",
+  customHeight: "number",
+  backgroundType: new Set(["none", "color", "image", "unsplash"]),
+  colorFillMode: new Set(["gradient", "solid"]),
+  gradientId: "string",
+  gradientFrom: "string",
+  gradientVia: "string",
+  gradientTo: "string",
+  gradientAngle: "number",
+  solidColor: "string",
+  noiseOverlay: "boolean",
+  bgPattern: new Set([
+    "none",
+    "dots",
+    "grid",
+    "diagonal",
+    "cross",
+    "rings",
+    "diamond",
+    "spotlight",
+  ]),
+  bgPatternOpacity: "number",
+  backgroundImageUrl: "string",
+  unsplashPhotoId: "string",
+  unsplashPhotographer: "string",
+  bgBlur: "number",
+  bgDim: "number",
+  borderStyle: new Set(["sharp", "curved", "round"]),
+  webLayout: new Set([
+    "offset",
+    "centered",
+    "docked",
+    "floating",
+    "tab",
+    "duo",
+  ]),
+  browserChrome: new Set([
+    "chrome",
+    "safari",
+    "arc",
+    "mobile",
+    "minimal",
+    "none",
+  ]),
+  chromeTheme: new Set(["light", "dark", "glass"]),
+  frameScale: "number",
+  frameOffsetX: "number",
+  frameOffsetY: "number",
+  frameShadow: "number",
+  frameTilt: new Set(["flat", "tilt-left", "tilt-right", "float-up"]),
+  showNavButtons: "boolean",
+  webShowQr: "boolean",
+  showCapturedFrom: "boolean",
+  showSpotlight: "boolean",
+  spotlightX: "number",
+  spotlightY: "number",
+  spotlightRadius: "number",
+  spotlightDim: "number",
+  tabAccentColor: "string",
+  showCornerIcon: "boolean",
+  cornerIconPosition: new Set(["top-left", "top-center", "top-right"]),
+  showPosterHeader: "boolean",
+  posterHeadlineAlign: new Set(["left", "center", "right"]),
+  posterHeadlineSize: "number",
+  showPosterFooter: "boolean",
+  fontStyle: new Set(["instrument", "geist", "mono", "editorial"]),
+  showCalloutBadge: "boolean",
+  calloutText: "string",
+  calloutPosition: new Set(["top-left", "top-center", "top-right"]),
+  socialCardStyle: new Set(["glass", "elevated", "browser", "pill", "bento"]),
+  socialCardTheme: new Set(["light", "dark", "glass"]),
+  socialVerified: "boolean",
+  socialShowQr: "boolean",
+  codeCardStyle: new Set(["snippet", "changelog"]),
+  codeTheme: new Set(["light", "dark", "glass"]),
+  codeLanguage: new Set([
+    "typescript",
+    "javascript",
+    "python",
+    "rust",
+    "go",
+    "bash",
+    "json",
+    "css",
+  ]),
+  codeShowLineNumbers: "boolean",
+}
+
+export function validateStylePresetPatch(
+  rawPatch: unknown
+): Partial<StudioState> | null {
+  if (!rawPatch || typeof rawPatch !== "object" || Array.isArray(rawPatch)) {
+    return null
+  }
+  const obj = rawPatch as Record<string, unknown>
+  const keys = Object.keys(obj)
+  if (keys.length === 0) return null
+
+  const validated: Record<string, unknown> = {}
+  for (const key of keys) {
+    const rule = PRESET_PATCH_SCHEMA[key]
+    if (!rule) return null
+    if (key === "showCapturedFrom") continue
+    const val = obj[key]
+    if (rule instanceof Set) {
+      if (typeof val !== "string" || !rule.has(val)) return null
+      validated[key] = val
+    } else if (rule === "string") {
+      if (typeof val !== "string") return null
+      if (key === "backgroundImageUrl" && val.startsWith("data:")) {
+        return null
+      }
+      validated[key] = val
+    } else if (rule === "number") {
+      if (typeof val !== "number" || !Number.isFinite(val)) return null
+      validated[key] = val
+    } else if (rule === "boolean") {
+      if (typeof val !== "boolean") return null
+      validated[key] = val
+    }
+  }
+  if (
+    validated.backgroundType === "unsplash" &&
+    !validated.backgroundImageUrl &&
+    typeof validated.unsplashPhotoId === "string"
+  ) {
+    validated.backgroundImageUrl = resolveUnsplashPhotoUrl(
+      validated.unsplashPhotoId
+    )
+  }
+  return validated as Partial<StudioState>
+}
+
+function readStoredCustomPresetsResult(): {
+  ok: boolean
+  presets: CustomPreset[]
+} {
+  if (typeof window === "undefined") return { ok: false, presets: [] }
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_PRESETS_STORAGE_KEY)
+    if (raw === null) return { ok: true, presets: [] }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return { ok: false, presets: [] }
+    const valid: CustomPreset[] = []
+    for (const item of parsed) {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        typeof item.name === "string" &&
+        (item.mode === "web" ||
+          item.mode === "social" ||
+          item.mode === "code") &&
+        typeof item.swatch === "string" &&
+        typeof item.createdAt === "number"
+      ) {
+        const cleanPatch = validateStylePresetPatch(item.patch)
+        if (cleanPatch) {
+          valid.push({
+            id: item.id,
+            name: item.name,
+            mode: item.mode,
+            swatch: item.swatch,
+            createdAt: item.createdAt,
+            patch: cleanPatch,
+          })
+        }
+      }
+    }
+    return { ok: true, presets: valid }
+  } catch {
+    return { ok: false, presets: [] }
+  }
+}
+
+export function loadCustomPresets(): CustomPreset[] {
+  return readStoredCustomPresetsResult().presets
+}
+
+export function saveCustomPresets(presets: CustomPreset[]): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    window.localStorage.setItem(
+      CUSTOM_PRESETS_STORAGE_KEY,
+      JSON.stringify(presets)
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function appendCustomPreset(
+  newPreset: CustomPreset,
+  currentList: CustomPreset[] = []
+): { ok: boolean; presets: CustomPreset[] } {
+  const storedResult = readStoredCustomPresetsResult()
+  if (!storedResult.ok) {
+    return { ok: false, presets: currentList }
+  }
+  const mergedMap = new Map<string, CustomPreset>()
+  for (const item of storedResult.presets) {
+    mergedMap.set(item.id, item)
+  }
+  mergedMap.set(newPreset.id, newPreset)
+  const next = Array.from(mergedMap.values())
+  const ok = saveCustomPresets(next)
+  return { ok, presets: ok ? next : storedResult.presets }
+}
+
+export function removeCustomPreset(
+  id: string,
+  currentList: CustomPreset[] = []
+): { ok: boolean; presets: CustomPreset[]; removed?: CustomPreset } {
+  const storedResult = readStoredCustomPresetsResult()
+  if (!storedResult.ok) {
+    return { ok: false, presets: currentList }
+  }
+  const mergedMap = new Map<string, CustomPreset>()
+  for (const item of storedResult.presets) {
+    mergedMap.set(item.id, item)
+  }
+  const removed = mergedMap.get(id)
+  mergedMap.delete(id)
+  const next = Array.from(mergedMap.values())
+  const ok = saveCustomPresets(next)
+  return {
+    ok,
+    presets: ok ? next : storedResult.presets,
+    removed: ok ? removed : undefined,
+  }
+}

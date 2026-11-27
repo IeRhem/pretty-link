@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono, DM_Sans, Instrument_Sans } from "next/font/google"
 import "./globals.css"
 import { cn } from "@/lib/utils"
+import { resolvePublicAppOrigin } from "@/lib/url-utils"
 import { ThemeProvider } from "@/components/theme-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
@@ -23,6 +24,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(resolvePublicAppOrigin()),
   title: "PrettyLink — Studio-Grade Link & Social Showcases",
   description:
     "Turn any website URL or social media profile link into a clean, shareable visual card powered by shadcn UI.",

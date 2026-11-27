@@ -37,11 +37,21 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SOCIAL_PLATFORM_LIST, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
+import {
+  CALLOUT_PRESET_CHIPS,
+  FONT_STYLES,
+  FRAME_TILT_PRESETS,
+  getFontStyleCssFamily,
+} from "@/lib/presets"
+import { CODE_LANGUAGES } from "@/components/studio/code-mockup-card"
 import { getQrByteLength, QR_MAX_BYTE_LENGTH } from "@/lib/qr"
 import type {
   BorderStyle,
   BrowserChromeStyle,
+  CalloutPosition,
   ChromeTheme,
+  CodeCardStyle,
+  CodeLanguageId,
   CornerIconPosition,
   PosterHeadlineAlign,
   SocialCardStyle,
@@ -83,6 +93,7 @@ const BORDER_OPTIONS: Array<{ id: BorderStyle; label: string }> = [
 
 type UploadField =
   | "customScreenshotUrl"
+  | "customMobileScreenshotUrl"
   | "customFaviconUrl"
   | "socialAvatarUrl"
   | "socialCoverUrl"
@@ -96,6 +107,9 @@ export function ControlSidebar({
   onOpenExport,
   onQuickCopy,
   getUploadResetToken,
+  getBackgroundResetToken,
+  getAssetMutationToken,
+  onNotify,
   onCloseMobile,
   closeButtonRef,
 }: {
@@ -107,26 +121,35 @@ export function ControlSidebar({
   onOpenExport: () => void
   onQuickCopy: () => void
   getUploadResetToken?: () => number
+  getBackgroundResetToken?: () => number
+  getAssetMutationToken?: (field: UploadField) => number
+  onNotify?: (message: string) => void
   onCloseMobile?: () => void
   closeButtonRef?: React.RefObject<HTMLButtonElement | null>
 }) {
   const [frameSectionOpen, setFrameSectionOpen] = React.useState(true)
   const [posterSectionOpen, setPosterSectionOpen] = React.useState(true)
   const screenshotInputRef = React.useRef<HTMLInputElement>(null)
+  const mobileScreenshotInputRef = React.useRef<HTMLInputElement>(null)
   const faviconInputRef = React.useRef<HTMLInputElement>(null)
   const avatarInputRef = React.useRef<HTMLInputElement>(null)
   const coverInputRef = React.useRef<HTMLInputElement>(null)
   const uploadRequestTokensRef = React.useRef<Record<UploadField, number>>({
     customScreenshotUrl: 0,
+    customMobileScreenshotUrl: 0,
     customFaviconUrl: 0,
     socialAvatarUrl: 0,
     socialCoverUrl: 0,
   })
   const navIconsLabelId = React.useId()
   const webQrLabelId = React.useId()
-  const capturedFromLabelId = React.useId()
   const socialQrLabelId = React.useId()
   const cornerIconLabelId = React.useId()
+  const calloutBadgeLabelId = React.useId()
+  const spotlightLabelId = React.useId()
+  const codeLineNumbersLabelId = React.useId()
+  const codeSnippetTextareaId = React.useId()
+  const changelogHighlightsTextareaId = React.useId()
   const headlineTextLabelId = React.useId()
   const footerSignatureLabelId = React.useId()
 
@@ -137,11 +160,13 @@ export function ControlSidebar({
     if (!file || !file.type.startsWith("image/")) return
     const token = ++uploadRequestTokensRef.current[field]
     const resetToken = getUploadResetToken?.() ?? 0
+    const startMutationToken = getAssetMutationToken?.(field) ?? 0
     const reader = new FileReader()
     reader.onload = () => {
       if (
         uploadRequestTokensRef.current[field] !== token ||
-        (getUploadResetToken?.() ?? 0) !== resetToken
+        (getUploadResetToken?.() ?? 0) !== resetToken ||
+        (getAssetMutationToken?.(field) ?? 0) !== startMutationToken
       ) {
         return
       }
@@ -199,6 +224,12 @@ export function ControlSidebar({
             >
               Social
             </TabsTrigger>
+            <TabsTrigger
+              value="code"
+              className="h-9 rounded-xl font-medium data-active:bg-muted/80 data-active:text-foreground dark:data-active:bg-secondary"
+            >
+              Code
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -253,7 +284,10 @@ export function ControlSidebar({
             <BackgroundControls
               state={state}
               onChange={onChange}
-              getUploadResetToken={getUploadResetToken}
+              getUploadResetToken={
+                getBackgroundResetToken ?? getUploadResetToken
+              }
+              onNotify={onNotify}
             />
 
             {/* Border Radius Selector matching uploaded mockup */}
@@ -295,7 +329,11 @@ export function ControlSidebar({
               >
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
                   <IconAdjustments className="size-3.5" />
-                  {state.mode === "web" ? "Browser Frame" : "Social Card"}
+                  {state.mode === "web"
+                    ? "Browser Frame"
+                    : state.mode === "social"
+                      ? "Social Card"
+                      : "Code & Changelog"}
                 </span>
                 <IconChevronDown
                   className={cn(
@@ -311,7 +349,7 @@ export function ControlSidebar({
                     <Label className="text-[11px] text-muted-foreground">
                       Layout
                     </Label>
-                    <div className="grid grid-cols-5 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                    <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
                       {(
                         [
                           { id: "offset", label: "Offset" },
@@ -319,6 +357,7 @@ export function ControlSidebar({
                           { id: "docked", label: "Docked" },
                           { id: "floating", label: "Float" },
                           { id: "tab", label: "Header" },
+                          { id: "duo", label: "Duo" },
                         ] as Array<{ id: WebLayoutStyle; label: string }>
                       ).map((opt) => (
                         <button
@@ -552,22 +591,6 @@ export function ControlSidebar({
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between px-0.5">
-                    <Label
-                      id={capturedFromLabelId}
-                      className="text-xs text-muted-foreground"
-                    >
-                      &ldquo;Captured from&rdquo; Badge
-                    </Label>
-                    <Switch
-                      aria-labelledby={capturedFromLabelId}
-                      checked={state.showCapturedFrom}
-                      onCheckedChange={(checked) =>
-                        onChange({ showCapturedFrom: checked })
-                      }
-                    />
-                  </div>
-
                   {state.webLayout === "tab" ? (
                     <div className="space-y-2.5 rounded-xl border border-border/70 bg-background/40 p-2.5">
                       {state.browserChrome !== "mobile" && (
@@ -657,39 +680,86 @@ export function ControlSidebar({
                         type="file"
                         accept="image/*"
                         className="hidden"
-                        onChange={(e) =>
-                          handleDataUrlUpload(
-                            e.target.files?.[0],
-                            "customScreenshotUrl"
-                          )
-                        }
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          e.target.value = ""
+                          handleDataUrlUpload(file, "customScreenshotUrl")
+                        }}
                       />
-                      <div className="flex gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="flex-1 text-xs"
-                          onClick={() => screenshotInputRef.current?.click()}
-                        >
-                          <IconPhotoUp />
-                          {state.customScreenshotUrl
-                            ? "Replace Screenshot"
-                            : "Upload Screenshot"}
-                        </Button>
-                        {state.customScreenshotUrl && (
+                      <input
+                        ref={mobileScreenshotInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          e.target.value = ""
+                          handleDataUrlUpload(
+                            file,
+                            "customMobileScreenshotUrl"
+                          )
+                        }}
+                      />
+                      <div className="space-y-1.5">
+                        <div className="flex gap-1.5">
                           <Button
                             type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => {
-                              uploadRequestTokensRef.current.customScreenshotUrl += 1
-                              onChange({ customScreenshotUrl: "" })
-                            }}
-                            aria-label="Clear custom screenshot"
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-xs"
+                            onClick={() => screenshotInputRef.current?.click()}
                           >
-                            <IconTrash />
+                            <IconPhotoUp />
+                            {state.customScreenshotUrl
+                              ? "Replace Screenshot"
+                              : "Upload Screenshot"}
                           </Button>
+                          {state.customScreenshotUrl && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => {
+                                uploadRequestTokensRef.current.customScreenshotUrl += 1
+                                onChange({ customScreenshotUrl: "" })
+                              }}
+                              aria-label="Clear custom screenshot"
+                            >
+                              <IconTrash />
+                            </Button>
+                          )}
+                        </div>
+                        {state.webLayout === "duo" && (
+                          <div className="flex gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="flex-1 text-xs"
+                              onClick={() =>
+                                mobileScreenshotInputRef.current?.click()
+                              }
+                            >
+                              <IconPhotoUp />
+                              {state.customMobileScreenshotUrl
+                                ? "Replace Mobile Shot"
+                                : "Upload Mobile Shot"}
+                            </Button>
+                            {state.customMobileScreenshotUrl && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => {
+                                  uploadRequestTokensRef.current.customMobileScreenshotUrl += 1
+                                  onChange({ customMobileScreenshotUrl: "" })
+                                }}
+                                aria-label="Clear custom mobile screenshot"
+                              >
+                                <IconTrash />
+                              </Button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -979,6 +1049,225 @@ export function ControlSidebar({
                   </div>
                 </div>
               )}
+
+              {frameSectionOpen && state.mode === "code" && (
+                <div className="space-y-3">
+                  {/* Card Style: Code Snippet vs Changelog */}
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Card Type
+                    </Label>
+                    <div className="grid grid-cols-2 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {(
+                        [
+                          { id: "snippet", label: "Code Snippet" },
+                          { id: "changelog", label: "Changelog" },
+                        ] as Array<{ id: CodeCardStyle; label: string }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => onChange({ codeCardStyle: opt.id })}
+                          className={cn(
+                            "rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                            state.codeCardStyle === opt.id
+                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Theme */}
+                  <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                    {(["dark", "light", "glass"] as ChromeTheme[]).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => onChange({ codeTheme: t })}
+                        className={cn(
+                          "rounded-lg py-1.5 text-[11px] font-medium capitalize transition-colors",
+                          state.codeTheme === t
+                            ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+
+                  {state.codeCardStyle === "snippet" ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Filename
+                          </Label>
+                          <Input
+                            value={state.codeFilename}
+                            onChange={(e) =>
+                              onChange({ codeFilename: e.target.value })
+                            }
+                            placeholder="prettylink.config.ts"
+                            className="h-8 font-mono text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Language
+                          </Label>
+                          <select
+                            value={state.codeLanguage}
+                            onChange={(e) =>
+                              onChange({
+                                codeLanguage: e.target.value as CodeLanguageId,
+                              })
+                            }
+                            aria-label="Code language"
+                            className="h-8 w-full rounded-lg border border-border/80 bg-background/60 px-2 text-xs text-foreground"
+                          >
+                            {CODE_LANGUAGES.map((lang) => (
+                              <option key={lang.id} value={lang.id}>
+                                {lang.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor={codeSnippetTextareaId}
+                          className="text-[11px] text-muted-foreground"
+                        >
+                          Code Snippet
+                        </Label>
+                        <Textarea
+                          id={codeSnippetTextareaId}
+                          value={state.codeContent}
+                          onChange={(e) =>
+                            onChange({ codeContent: e.target.value })
+                          }
+                          rows={5}
+                          className="min-h-24 font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between pt-0.5">
+                        <Label
+                          id={codeLineNumbersLabelId}
+                          className="text-xs text-muted-foreground"
+                        >
+                          Line Numbers
+                        </Label>
+                        <Switch
+                          aria-labelledby={codeLineNumbersLabelId}
+                          checked={state.codeShowLineNumbers}
+                          onCheckedChange={(checked) =>
+                            onChange({ codeShowLineNumbers: checked })
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Version
+                          </Label>
+                          <Input
+                            value={state.changelogVersion}
+                            onChange={(e) =>
+                              onChange({ changelogVersion: e.target.value })
+                            }
+                            placeholder="v2.4.0"
+                            className="h-8 font-mono text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">
+                            Release Label
+                          </Label>
+                          <Input
+                            value={state.changelogDate}
+                            onChange={(e) =>
+                              onChange({ changelogDate: e.target.value })
+                            }
+                            placeholder="Just Shipped"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">
+                          Release Title
+                        </Label>
+                        <Input
+                          value={state.changelogTitle}
+                          onChange={(e) =>
+                            onChange({ changelogTitle: e.target.value })
+                          }
+                          placeholder="Interactive Stage & Duo Device Showcases"
+                          className="h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor={changelogHighlightsTextareaId}
+                          className="text-[11px] text-muted-foreground"
+                        >
+                          Highlights (prefix + New, * Improved, ✓ Fixed)
+                        </Label>
+                        <Textarea
+                          id={changelogHighlightsTextareaId}
+                          value={state.changelogItems}
+                          onChange={(e) =>
+                            onChange({ changelogItems: e.target.value })
+                          }
+                          rows={4}
+                          className="min-h-20 text-xs"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {frameSectionOpen && (
+                <div className="space-y-1.5 pt-1">
+                  <Label className="text-[11px] text-muted-foreground">
+                    3D Perspective Tilt
+                  </Label>
+                  <div className="grid grid-cols-4 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                    {FRAME_TILT_PRESETS.map((preset) => {
+                      const active =
+                        (state.frameTilt ?? "flat") === preset.id
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => onChange({ frameTilt: preset.id })}
+                          className={cn(
+                            "rounded-lg py-1.5 text-[10px] font-medium transition-colors sm:text-[11px]",
+                            active
+                              ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {preset.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <Separator className="opacity-60" />
@@ -1015,6 +1304,194 @@ export function ControlSidebar({
 
               {posterSectionOpen && (
                 <div className="space-y-3">
+                  {/* Typography Style Picker */}
+                  <div className="space-y-1.5 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Typography Style
+                    </Label>
+                    <div className="grid grid-cols-4 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                      {FONT_STYLES.map((font) => {
+                        const active =
+                          (state.fontStyle ?? "instrument") === font.id
+                        return (
+                          <button
+                            key={font.id}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => onChange({ fontStyle: font.id })}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[10px] font-medium transition-colors",
+                              active
+                                ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            <span
+                              style={{
+                                fontFamily: getFontStyleCssFamily(font.id),
+                              }}
+                              className="text-xs font-bold leading-none"
+                            >
+                              {font.previewSample}
+                            </span>
+                            <span>{font.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Spotlight Focus Overlay */}
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label
+                        id={spotlightLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
+                        Spotlight Focus
+                      </Label>
+                      <Switch
+                        aria-labelledby={spotlightLabelId}
+                        checked={state.showSpotlight}
+                        onCheckedChange={(checked) =>
+                          onChange({ showSpotlight: checked })
+                        }
+                      />
+                    </div>
+                    {state.showSpotlight && (
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Radius</span>
+                            <span className="font-mono tabular-nums">
+                              {state.spotlightRadius}%
+                            </span>
+                          </div>
+                          <Slider
+                            min={12}
+                            max={55}
+                            step={1}
+                            value={[state.spotlightRadius]}
+                            onValueChange={(v) =>
+                              onChange({
+                                spotlightRadius: Array.isArray(v)
+                                  ? (v[0] ?? 28)
+                                  : v,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Backdrop Dim</span>
+                            <span className="font-mono tabular-nums">
+                              {state.spotlightDim}%
+                            </span>
+                          </div>
+                          <Slider
+                            min={20}
+                            max={85}
+                            step={5}
+                            value={[state.spotlightDim]}
+                            onValueChange={(v) =>
+                              onChange({
+                                spotlightDim: Array.isArray(v)
+                                  ? (v[0] ?? 55)
+                                  : v,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Callout / Annotation Badge */}
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <Label
+                        id={calloutBadgeLabelId}
+                        className="text-xs text-muted-foreground"
+                      >
+                        Callout Badge
+                      </Label>
+                      <Switch
+                        aria-labelledby={calloutBadgeLabelId}
+                        checked={state.showCalloutBadge}
+                        onCheckedChange={(checked) =>
+                          onChange({ showCalloutBadge: checked })
+                        }
+                      />
+                    </div>
+                    {state.showCalloutBadge && (
+                      <div className="space-y-2 pt-1">
+                        <Input
+                          value={state.calloutText}
+                          onChange={(e) =>
+                            onChange({ calloutText: e.target.value })
+                          }
+                          placeholder="New Release"
+                          maxLength={36}
+                          aria-label="Callout badge text"
+                          className="h-8 text-xs"
+                        />
+                        <div className="flex flex-wrap gap-1">
+                          {CALLOUT_PRESET_CHIPS.map((chip) => {
+                            const active = state.calloutText === chip
+                            return (
+                              <button
+                                key={chip}
+                                type="button"
+                                onClick={() => onChange({ calloutText: chip })}
+                                className={cn(
+                                  "rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                                  active
+                                    ? "border-primary/60 bg-primary/15 text-foreground"
+                                    : "border-border/70 bg-background/50 text-muted-foreground hover:text-foreground"
+                                )}
+                              >
+                                {chip}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <div
+                          role="group"
+                          aria-label="Callout badge position"
+                          className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70"
+                        >
+                          {(
+                            [
+                              { id: "top-left", label: "Left" },
+                              { id: "top-center", label: "Center" },
+                              { id: "top-right", label: "Right" },
+                            ] as Array<{
+                              id: CalloutPosition
+                              label: string
+                            }>
+                          ).map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              aria-pressed={state.calloutPosition === opt.id}
+                              onClick={() =>
+                                onChange({ calloutPosition: opt.id })
+                              }
+                              className={cn(
+                                "rounded-lg py-1 text-[11px] font-medium transition-colors",
+                                state.calloutPosition === opt.id
+                                  ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Corner Icon Watermark */}
                   <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
                     <div className="flex items-center justify-between">

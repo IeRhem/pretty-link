@@ -14,6 +14,7 @@ import {
   IconX,
 } from "@tabler/icons-react"
 import { QrCodeSvg } from "@/components/studio/qr-code-svg"
+import { getFontStyleCssFamily } from "@/lib/presets"
 import type { StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl, normalizeUrl, validatePublicUrl } from "@/lib/url-utils"
 import { cn } from "@/lib/utils"
@@ -360,38 +361,28 @@ export function PosterOverlays({
     previewGeneration
   )
   const showWebQr = state.mode === "web" && state.webShowQr
-  const showCapturedFrom = state.mode === "web" && state.showCapturedFrom
+  const hasCalloutBadge =
+    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
   const hasAnyOverlay =
     state.showCornerIcon ||
+    hasCalloutBadge ||
     state.showPosterHeader ||
     state.showPosterFooter ||
-    showWebQr ||
-    showCapturedFrom
+    showWebQr
   if (!hasAnyOverlay) return null
 
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const accentColor = resolveTabAccentColor(state)
+  const headingFontFamily = getFontStyleCssFamily(state.fontStyle)
   const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
   const qrSize = Math.round(54 * scaleFactor)
-  const activeMetadata =
-    state.metadata &&
-    (!state.metadata.requestedUrl ||
-      normalizeUrl(state.metadata.requestedUrl) === normalizeUrl(state.url))
-      ? state.metadata
-      : null
-  const domainLabel = activeMetadata?.domain || formatDisplayUrl(state.url)
 
   const cornerSize = Math.round(46 * scaleFactor)
   const headlineScale = (state.posterHeadlineSize ?? 100) / 100
   const headlineFontSize = Math.round(42 * scaleFactor * headlineScale)
   const headlineLines = state.posterHeadline.split("\n")
   const hasAccentText = Boolean(state.posterAccentText.trim())
-  const footerOffset = getPosterFooterStackOffset(
-    state,
-    scaleFactor,
-    logicalWidth
-  )
   const hasFooterTitle = Boolean(state.posterFooterTitle.trim())
   const hasFooterSubtitle = Boolean(state.posterFooterSubtitle.trim())
   const hasVisibleFooter =
@@ -447,6 +438,88 @@ export function PosterOverlays({
         </div>
       )}
 
+      {hasCalloutBadge && (() => {
+        const pillH = Math.round(26 * scaleFactor)
+        const sharesCornerWithIcon =
+          state.showCornerIcon &&
+          state.cornerIconPosition === state.calloutPosition
+        const defaultPillY = sharesCornerWithIcon
+          ? Math.round(logicalHeight * 0.055 + cornerSize + Math.round(8 * scaleFactor))
+          : Math.round(logicalHeight * 0.055)
+        const headlineTopY = Math.round(logicalHeight * 0.17)
+        const minHeadlineGap = Math.round(6 * scaleFactor)
+        const hasHeadlineText =
+          state.showPosterHeader &&
+          Boolean(state.posterHeadline.trim() || state.posterAccentText.trim())
+        const overlapsHeadline =
+          hasHeadlineText && defaultPillY + pillH + minHeadlineGap > headlineTopY
+        const resolvedTop = overlapsHeadline
+          ? `${Math.max(Math.round(4 * scaleFactor), headlineTopY - pillH - minHeadlineGap)}px`
+          : sharesCornerWithIcon
+            ? `calc(5.5% + ${cornerSize + Math.round(8 * scaleFactor)}px)`
+            : "5.5%"
+        const shiftBesideCornerIcon =
+          overlapsHeadline &&
+          sharesCornerWithIcon &&
+          Math.max(Math.round(4 * scaleFactor), headlineTopY - pillH - minHeadlineGap) <
+            Math.round(logicalHeight * 0.055) + cornerSize
+
+        return (
+          <div
+            style={{
+              top: resolvedTop,
+              ...(state.calloutPosition === "top-center"
+                ? shiftBesideCornerIcon
+                  ? {
+                      left: `calc(50% + ${Math.round(cornerSize / 2 + 10 * scaleFactor)}px)`,
+                    }
+                  : { left: "50%", transform: "translateX(-50%)" }
+                : state.calloutPosition === "top-right"
+                  ? {
+                      right: shiftBesideCornerIcon
+                        ? `calc(7.5% + ${cornerSize + Math.round(10 * scaleFactor)}px)`
+                        : "7.5%",
+                    }
+                  : {
+                      left: shiftBesideCornerIcon
+                        ? `calc(7.5% + ${cornerSize + Math.round(10 * scaleFactor)}px)`
+                        : "7.5%",
+                    }),
+              height: `${pillH}px`,
+              paddingLeft: `${Math.round(9 * scaleFactor)}px`,
+              paddingRight: `${Math.round(11 * scaleFactor)}px`,
+              gap: `${Math.round(6 * scaleFactor)}px`,
+              fontFamily: headingFontFamily,
+              ...(shiftBesideCornerIcon && state.calloutPosition === "top-center"
+                ? {
+                    maxWidth: `calc(46% - ${Math.round(cornerSize / 2 + 10 * scaleFactor)}px)`,
+                  }
+                : {}),
+            }}
+            className="absolute z-30 flex max-w-[78%] items-center rounded-full bg-zinc-950/88 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-md"
+          >
+            <span
+              style={{
+                width: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
+                height: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
+                backgroundColor: accentColor,
+                boxShadow: `0 0 ${Math.round(8 * scaleFactor)}px ${accentColor}`,
+              }}
+              className="shrink-0 rounded-full"
+            />
+            <span
+              style={{
+                fontSize: `${Math.round(11 * scaleFactor)}px`,
+                letterSpacing: "0.02em",
+              }}
+              className="truncate font-semibold"
+            >
+              {state.calloutText.trim()}
+            </span>
+          </div>
+        )
+      })()}
+
       {state.showPosterHeader && (
         <div
           style={{
@@ -458,6 +531,7 @@ export function PosterOverlays({
             lineHeight: 1.08,
             letterSpacing: "-0.03em",
             fontWeight: 500,
+            fontFamily: headingFontFamily,
           }}
           className="absolute z-0 font-heading text-white"
         >
@@ -478,116 +552,41 @@ export function PosterOverlays({
         </div>
       )}
 
-      {(hasVisibleFooter || showCapturedFrom) && (
+      {hasVisibleFooter && (
         <div
-          style={{
-            bottom: "4.5%",
-            gap:
-              hasVisibleFooter && showCapturedFrom
-                ? `${Math.round(10 * scaleFactor)}px`
-                : undefined,
-          }}
+          style={{ bottom: "4.5%" }}
           className="absolute inset-x-0 z-20 flex flex-col items-center"
         >
-          {showCapturedFrom && (
-            <div
-              style={{
-                ...(footerOffset > 0 && showWebQr
-                  ? { alignSelf: "flex-start", marginLeft: "4.5%" }
-                  : undefined),
-                maxWidth: showWebQr
-                  ? footerOffset > 0
-                    ? "72%"
-                    : "64%"
-                  : "86%",
-                height: `${Math.round(30 * scaleFactor)}px`,
-                paddingLeft: `${Math.round(8 * scaleFactor)}px`,
-                paddingRight: `${Math.round(12 * scaleFactor)}px`,
-                gap: `${Math.round(6 * scaleFactor)}px`,
-              }}
-              className="flex items-center rounded-full bg-zinc-950/90 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-md"
-            >
-              {activeFavicon ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={`${previewGeneration}-${activeFavicon}`}
-                  src={activeFavicon}
-                  alt=""
-                  onError={() => markFaviconFailed(activeFavicon)}
-                  style={{
-                    width: `${Math.round(16 * scaleFactor)}px`,
-                    height: `${Math.round(16 * scaleFactor)}px`,
-                  }}
-                  className="shrink-0 rounded-full object-contain"
-                />
-              ) : (
-                <BrandMarkSvg
-                  accentColor={accentColor}
-                  style={{
-                    width: `${Math.round(16 * scaleFactor)}px`,
-                    height: `${Math.round(16 * scaleFactor)}px`,
-                  }}
-                  className="shrink-0"
-                />
-              )}
-              <span
+          <div className="flex max-w-[84%] flex-col items-center text-center">
+            {hasFooterTitle && (
+              <div
+                style={{
+                  fontSize: `${Math.round(14 * scaleFactor)}px`,
+                  lineHeight: 1.25,
+                  letterSpacing: "0.06em",
+                  fontFamily: headingFontFamily,
+                }}
+                className="font-heading font-bold text-white"
+              >
+                {state.posterFooterTitle}
+              </div>
+            )}
+            {hasFooterSubtitle && (
+              <div
                 style={{
                   fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-                  color: "rgba(255, 255, 255, 0.65)",
+                  lineHeight: 1.25,
+                  marginTop: hasFooterTitle
+                    ? `${Math.round(2 * scaleFactor)}px`
+                    : undefined,
+                  color: "rgba(255, 255, 255, 0.75)",
                 }}
-                className="shrink-0 font-medium whitespace-nowrap"
+                className="font-medium"
               >
-                Captured from
-              </span>
-              <span
-                style={{ fontSize: `${Math.round(11 * scaleFactor)}px` }}
-                className="min-w-0 truncate font-semibold"
-              >
-                {domainLabel}
-              </span>
-              <IconArrowUpRight
-                style={{
-                  width: `${Math.round(12 * scaleFactor)}px`,
-                  height: `${Math.round(12 * scaleFactor)}px`,
-                  opacity: 0.75,
-                }}
-                className="shrink-0"
-                stroke={2.1}
-              />
-            </div>
-          )}
-
-          {hasVisibleFooter && (
-            <div className="flex max-w-[84%] flex-col items-center text-center">
-              {hasFooterTitle && (
-                <div
-                  style={{
-                    fontSize: `${Math.round(14 * scaleFactor)}px`,
-                    lineHeight: 1.25,
-                    letterSpacing: "0.06em",
-                  }}
-                  className="font-heading font-bold text-white"
-                >
-                  {state.posterFooterTitle}
-                </div>
-              )}
-              {hasFooterSubtitle && (
-                <div
-                  style={{
-                    fontSize: `${Math.round(10.5 * scaleFactor)}px`,
-                    lineHeight: 1.25,
-                    marginTop: hasFooterTitle
-                      ? `${Math.round(2 * scaleFactor)}px`
-                      : undefined,
-                    color: "rgba(255, 255, 255, 0.75)",
-                  }}
-                  className="font-medium"
-                >
-                  {state.posterFooterSubtitle}
-                </div>
-              )}
-            </div>
-          )}
+                {state.posterFooterSubtitle}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -624,9 +623,19 @@ export function WebMockupCard({
   isFetching?: boolean
   previewGeneration?: number
 }) {
+  const failureScopeKey = `${previewGeneration}|${state.metadata?.fetchedAt ?? ""}|${state.url}`
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
-  const [failedUrls, setFailedUrls] = React.useState<string[]>([])
-  const [iframeLoadedUrl, setIframeLoadedUrl] = React.useState<string | null>(null)
+  const [failedState, setFailedState] = React.useState<{
+    scopeKey: string
+    urls: string[]
+  }>({ scopeKey: failureScopeKey, urls: [] })
+  const failedUrls = React.useMemo(
+    () => (failedState.scopeKey === failureScopeKey ? failedState.urls : []),
+    [failedState, failureScopeKey]
+  )
+  const [loadedIframeToken, setLoadedIframeToken] = React.useState<{
+    key: string
+  } | null>(null)
   const viewportRef = React.useRef<HTMLDivElement>(null)
   const [viewportSize, setViewportSize] = React.useState({ width: 440, height: 320 })
   const displayUrl = formatDisplayUrl(state.url)
@@ -656,23 +665,64 @@ export function WebMockupCard({
     return check.ok ? check.url.toString() : null
   }, [state.url])
 
+  const isDarkChrome = state.chromeTheme === "dark"
+  const isGlassChrome = state.chromeTheme === "glass"
+
+  const themedScreenshotUrl = React.useMemo(() => {
+    const raw = state.metadata?.screenshotUrl
+    if (!raw) return null
+    const sep = raw.includes("?") ? "&" : "?"
+    return `${raw}${sep}theme=${isDarkChrome ? "dark" : "light"}`
+  }, [state.metadata?.screenshotUrl, isDarkChrome])
+
+  const generatedMobileScreenshotUrl = React.useMemo(() => {
+    const raw = state.metadata?.screenshotUrl
+    if (!raw) return null
+    const sep = raw.includes("?") ? "&" : "?"
+    return `${raw}${sep}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
+  }, [state.metadata?.screenshotUrl, isDarkChrome])
+
+  const mobileCandidates = React.useMemo(
+    () =>
+      [state.customMobileScreenshotUrl, generatedMobileScreenshotUrl].filter(
+        (v): v is string => Boolean(v)
+      ),
+    [state.customMobileScreenshotUrl, generatedMobileScreenshotUrl]
+  )
+
   const candidates = React.useMemo(
     () =>
       [
         state.customScreenshotUrl,
-        state.metadata?.screenshotUrl,
+        themedScreenshotUrl,
         state.metadata?.ogImageUrl,
       ].filter((v): v is string => Boolean(v)),
     [
       state.customScreenshotUrl,
-      state.metadata?.screenshotUrl,
+      themedScreenshotUrl,
       state.metadata?.ogImageUrl,
     ]
   )
 
   const activeImage = candidates.find((src) => !failedUrls.includes(src)) ?? ""
+  const activeMobileImage =
+    mobileCandidates.find((src) => !failedUrls.includes(src)) ?? activeImage
   const imageReady = Boolean(activeImage) && loadedSrc === activeImage
-  const iframeReady = Boolean(liveIframeUrl) && iframeLoadedUrl === liveIframeUrl
+  const isIframeMounted = Boolean(
+    liveIframeUrl &&
+      !state.customScreenshotUrl &&
+      state.webLayout !== "tab"
+  )
+  const currentIframeKey =
+    isIframeMounted && liveIframeUrl
+      ? `${liveIframeUrl}:${previewGeneration}:${isDarkChrome ? "dark" : "light"}`
+      : ""
+  const iframeInstanceToken = React.useMemo(
+    () => (currentIframeKey ? { key: currentIframeKey } : null),
+    [currentIframeKey]
+  )
+  const iframeReady =
+    Boolean(iframeInstanceToken) && loadedIframeToken === iframeInstanceToken
   const showLoadingHint =
     isFetching || (Boolean(activeImage) && !imageReady && !iframeReady)
 
@@ -682,15 +732,28 @@ export function WebMockupCard({
     Math.round(viewportSize.height / iframeScale)
   )
 
-  const markFailed = (src: string) => {
-    setFailedUrls((prev) => (prev.includes(src) ? prev : [...prev, src]))
-  }
+  const markFailed = React.useCallback(
+    (src: string) => {
+      setFailedState((prev) => {
+        const currentUrls =
+          prev.scopeKey === failureScopeKey ? prev.urls : []
+        if (currentUrls.includes(src)) {
+          return prev.scopeKey === failureScopeKey
+            ? prev
+            : { scopeKey: failureScopeKey, urls: currentUrls }
+        }
+        return {
+          scopeKey: failureScopeKey,
+          urls: [...currentUrls, src],
+        }
+      })
+    },
+    [failureScopeKey]
+  )
 
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const userScale = state.frameScale / 100
-  const isDarkChrome = state.chromeTheme === "dark"
-  const isGlassChrome = state.chromeTheme === "glass"
   const isDefaultLerhem = displayUrl.toLowerCase().includes("lerhem.space")
   const accentColor = resolveTabAccentColor(state)
 
@@ -759,6 +822,19 @@ export function WebMockupCard({
         height: "82%",
         borderTopLeftRadius: `${Math.round(18 * scaleFactor)}px`,
         borderTopRightRadius: `${Math.round(18 * scaleFactor)}px`,
+      }
+    }
+
+    if (state.webLayout === "duo") {
+      return {
+        ...base,
+        position: "absolute",
+        left: `${45 + offX}%`,
+        top: `${47 + offY}%`,
+        transform: `translate(-50%, -50%) scale(${userScale})`,
+        width: "78%",
+        height: "68%",
+        borderRadius: `${Math.round(16 * scaleFactor)}px`,
       }
     }
 
@@ -1394,6 +1470,7 @@ export function WebMockupCard({
   }
 
   return (
+    <>
     <div
       style={frameBoxStyle}
       className={cn(
@@ -1404,7 +1481,11 @@ export function WebMockupCard({
       {renderChrome()}
 
       {/* Viewport */}
-      <div ref={viewportRef} className="relative flex-1 overflow-hidden">
+      <div
+        ref={viewportRef}
+        style={{ colorScheme: isDarkChrome ? "dark" : "light" }}
+        className="relative flex-1 overflow-hidden"
+      >
         <div
           className={cn(
             "flex h-full flex-col justify-between p-5",
@@ -1459,20 +1540,22 @@ export function WebMockupCard({
 
         {liveIframeUrl && !state.customScreenshotUrl && (
           <iframe
-            key={liveIframeUrl}
+            key={currentIframeKey}
             src={liveIframeUrl}
             title={`Live preview of ${displayUrl}`}
             sandbox="allow-scripts allow-same-origin"
             tabIndex={-1}
-            onLoad={() => setIframeLoadedUrl(liveIframeUrl)}
+            onLoad={() => setLoadedIframeToken(iframeInstanceToken)}
             style={{
               width: "1280px",
               height: `${iframeHeight}px`,
               transform: `scale(${iframeScale})`,
               transformOrigin: "top left",
+              colorScheme: isDarkChrome ? "dark" : "light",
             }}
             className={cn(
-              "pointer-events-none absolute top-0 left-0 z-[5] border-0 bg-white transition-opacity duration-300",
+              "pointer-events-none absolute top-0 left-0 z-[5] border-0 transition-opacity duration-300",
+              isDarkChrome ? "bg-[#09090b]" : "bg-white",
               iframeReady ? "opacity-100" : "opacity-0"
             )}
           />
@@ -1502,5 +1585,109 @@ export function WebMockupCard({
         )}
       </div>
     </div>
+
+    {state.webLayout === "duo" && (
+      <div
+        style={{
+          position: "absolute",
+          left: `${73 + (state.frameOffsetX ?? 0)}%`,
+          top: `${59 + (state.frameOffsetY ?? 0)}%`,
+          transform: `translate(-50%, -50%) scale(${userScale})`,
+          width: "26.5%",
+          height: "64%",
+          borderRadius: `${Math.round(22 * scaleFactor)}px`,
+          boxShadow:
+            state.frameShadow > 0
+              ? `0 ${Math.round(shadowY * 1.1)}px ${Math.round(shadowBlur * 1.1)}px rgba(9, 9, 14, ${Math.min(0.75, shadowAlpha + 0.14)})`
+              : "none",
+        }}
+        className={cn(
+          "z-20 flex flex-col overflow-hidden border-[3px]",
+          isDarkChrome
+            ? "border-zinc-800 bg-[#09090b] text-zinc-50 ring-1 ring-white/15"
+            : "border-zinc-900 bg-white text-zinc-950 ring-1 ring-black/15"
+        )}
+      >
+        {/* Top Phone Dynamic Island / Notch Header */}
+        <div
+          className={cn(
+            "flex shrink-0 flex-col items-center justify-center gap-1 border-b px-2 pt-1.5 pb-1",
+            isDarkChrome
+              ? "border-white/8 bg-[#121216]"
+              : "border-black/8 bg-zinc-50"
+          )}
+        >
+          <div className="h-1.5 w-9 rounded-full bg-zinc-950 ring-1 ring-white/15" />
+          <div
+            className={cn(
+              "flex w-full items-center justify-center rounded-full px-2 py-0.5 font-mono text-[7.5px] font-medium truncate",
+              isDarkChrome
+                ? "bg-white/8 text-zinc-300"
+                : "bg-black/6 text-zinc-700"
+            )}
+          >
+            <span className="truncate">{displayUrl}</span>
+          </div>
+        </div>
+
+        {/* Phone Viewport */}
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            className={cn(
+              "flex h-full flex-col justify-between p-2.5",
+              isDarkChrome
+                ? "bg-[#0b0b0e] text-zinc-50"
+                : "bg-white text-zinc-950"
+            )}
+          >
+            <span className="truncate text-[8px] font-semibold tracking-wider uppercase opacity-70">
+              {state.metadata?.siteName || displayUrl}
+            </span>
+            <div className="my-auto space-y-1">
+              <div className="line-clamp-3 font-heading text-[10px] leading-snug font-bold">
+                {state.metadata?.title || displayUrl}
+              </div>
+              <div className="line-clamp-2 text-[7.5px] leading-tight opacity-65">
+                {state.metadata?.description || "Mobile web preview"}
+              </div>
+            </div>
+            <span
+              style={{
+                backgroundColor: state.metadata?.themeColor || accentColor,
+              }}
+              className="inline-flex w-fit rounded-full px-2 py-0.5 text-[7px] font-semibold text-white"
+            >
+              Open →
+            </span>
+          </div>
+
+          {activeMobileImage && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={activeMobileImage}
+              alt={`Mobile preview of ${displayUrl}`}
+              onError={() => markFailed(activeMobileImage)}
+              className="absolute inset-0 z-10 size-full object-cover object-top"
+            />
+          )}
+        </div>
+
+        {/* Bottom Home Indicator Bar */}
+        <div
+          className={cn(
+            "flex h-3 shrink-0 items-center justify-center",
+            isDarkChrome ? "bg-[#09090b]" : "bg-white"
+          )}
+        >
+          <div
+            className={cn(
+              "h-1 w-10 rounded-full",
+              isDarkChrome ? "bg-white/30" : "bg-black/25"
+            )}
+          />
+        </div>
+      </div>
+    )}
+    </>
   )
 }

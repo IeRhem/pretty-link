@@ -18,9 +18,16 @@ const SCREENSHOT_CACHE_TTL_MS = 15 * 60 * 1000
 const SCREENSHOT_CACHE_MAX = 40
 const MIN_SCREENSHOT_BYTES = 2500
 
+type EffectiveScreenshotTheme = "light" | "dark" | "unthemed"
+
 const screenshotCache = new Map<
   string,
-  { buffer: ArrayBuffer; contentType: string; expiresAt: number }
+  {
+    buffer: ArrayBuffer
+    contentType: string
+    expiresAt: number
+    effectiveTheme: EffectiveScreenshotTheme
+  }
 >()
 
 function getCachedScreenshot(key: string) {
@@ -36,7 +43,8 @@ function getCachedScreenshot(key: string) {
 function setCachedScreenshot(
   key: string,
   buffer: ArrayBuffer,
-  contentType: string
+  contentType: string,
+  effectiveTheme: EffectiveScreenshotTheme
 ) {
   if (buffer.byteLength > CACHE_MAX_BYTES) return
   if (screenshotCache.size >= SCREENSHOT_CACHE_MAX) {
@@ -47,6 +55,7 @@ function setCachedScreenshot(
     buffer,
     contentType,
     expiresAt: Date.now() + SCREENSHOT_CACHE_TTL_MS,
+    effectiveTheme,
   })
 }
 
@@ -90,10 +99,18 @@ async function tryFetchRasterImage(
   }
 }
 
-async function tryMicrolink(targetUrl: string) {
+async function tryMicrolink(
+  targetUrl: string,
+  colorScheme: "light" | "dark",
+  viewport: "desktop" | "mobile"
+) {
+  const vpParams =
+    viewport === "mobile"
+      ? "viewport.width=390&viewport.height=844&viewport.isMobile=true"
+      : "viewport.width=1280&viewport.height=900"
   const endpoint = `https://api.microlink.io/?url=${encodeURIComponent(
     targetUrl
-  )}&screenshot=true&meta=false&viewport.width=1280&viewport.height=900`
+  )}&screenshot=true&meta=false&${vpParams}&colorScheme=${colorScheme}`
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10_000)
@@ -126,10 +143,14 @@ async function tryMicrolink(targetUrl: string) {
   }
 }
 
-async function tryWordPressMshots(targetUrl: string) {
+async function tryWordPressMshots(
+  targetUrl: string,
+  viewport: "desktop" | "mobile"
+) {
+  const dims = viewport === "mobile" ? "w=390&h=844" : "w=1280&h=960"
   const mshotsUrl = `https://s0.wp.com/mshots/v1/${encodeURIComponent(
     targetUrl
-  )}?w=1280&h=960`
+  )}?${dims}`
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await tryFetchRasterImage(mshotsUrl, 8000)
@@ -141,13 +162,25 @@ async function tryWordPressMshots(targetUrl: string) {
   return null
 }
 
-async function tryThumIo(targetUrl: string) {
+async function tryThumIo(
+  targetUrl: string,
+  viewport: "desktop" | "mobile"
+) {
+  if (viewport === "mobile") {
+    return null
+  }
   const thumUrl = `https://image.thum.io/get/width/1280/crop/900/noanimate/${targetUrl}`
   return tryFetchRasterImage(thumUrl, 8000)
 }
 
 export async function GET(request: NextRequest) {
   const rawUrl = request.nextUrl.searchParams.get("url")
+  const colorScheme =
+    request.nextUrl.searchParams.get("theme") === "dark" ? "dark" : "light"
+  const viewport =
+    request.nextUrl.searchParams.get("viewport") === "mobile"
+      ? "mobile"
+      : "desktop"
   if (!rawUrl) {
     return Response.json({ error: "Missing url parameter." }, { status: 400 })
   }
@@ -158,7 +191,9 @@ export async function GET(request: NextRequest) {
   }
 
   const targetUrl = check.url.toString()
-  const cached = getCachedScreenshot(targetUrl)
+  const requestedCacheKey = `${targetUrl}|${colorScheme}|${viewport}`
+  const unthemedCacheKey = `${targetUrl}|unthemed|${viewport}`
+  const cached = getCachedScreenshot(requestedCacheKey)
   if (cached) {
     return new Response(cached.buffer.slice(0), {
       status: 200,
@@ -166,14 +201,32 @@ export async function GET(request: NextRequest) {
         "Content-Type": cached.contentType,
         "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
         "X-Content-Type-Options": "nosniff",
+        "X-Screenshot-Theme": cached.effectiveTheme,
       },
     })
   }
 
-  const captured =
-    (await tryMicrolink(targetUrl)) ??
-    (await tryWordPressMshots(targetUrl)) ??
-    (await tryThumIo(targetUrl))
+  const microlinkCapture = await tryMicrolink(targetUrl, colorScheme, viewport)
+  if (!microlinkCapture) {
+    const cachedUnthemed = getCachedScreenshot(unthemedCacheKey)
+    if (cachedUnthemed) {
+      return new Response(cachedUnthemed.buffer.slice(0), {
+        status: 200,
+        headers: {
+          "Content-Type": cachedUnthemed.contentType,
+          "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+          "X-Content-Type-Options": "nosniff",
+          "X-Screenshot-Theme": cachedUnthemed.effectiveTheme,
+        },
+      })
+    }
+  }
+
+  const fallbackCapture = microlinkCapture
+    ? null
+    : ((await tryWordPressMshots(targetUrl, viewport)) ??
+      (await tryThumIo(targetUrl, viewport)))
+  const captured = microlinkCapture ?? fallbackCapture
 
   if (!captured) {
     return Response.json(
@@ -182,7 +235,18 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  setCachedScreenshot(targetUrl, captured.buffer, captured.contentType)
+  const isThemedCapture = Boolean(microlinkCapture)
+  const effectiveThemeHeader: EffectiveScreenshotTheme = isThemedCapture
+    ? colorScheme
+    : "unthemed"
+  const storeCacheKey = isThemedCapture ? requestedCacheKey : unthemedCacheKey
+
+  setCachedScreenshot(
+    storeCacheKey,
+    captured.buffer,
+    captured.contentType,
+    effectiveThemeHeader
+  )
 
   return new Response(captured.buffer, {
     status: 200,
@@ -190,6 +254,7 @@ export async function GET(request: NextRequest) {
       "Content-Type": captured.contentType,
       "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
       "X-Content-Type-Options": "nosniff",
+      "X-Screenshot-Theme": effectiveThemeHeader,
     },
   })
 }

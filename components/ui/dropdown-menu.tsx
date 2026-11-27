@@ -108,13 +108,46 @@ function DropdownMenuRadioItemIndicator({
   )
 }
 
+function DropdownMenuItem({
+  className,
+  closeOnClick = true,
+  ...props
+}: MenuPrimitive.Item.Props) {
+  return (
+    <MenuPrimitive.Item
+      data-slot="dropdown-menu-item"
+      closeOnClick={closeOnClick}
+      className={cn(
+        "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium outline-hidden select-none transition-colors data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function DropdownMenuSeparator({
+  className,
+  ...props
+}: MenuPrimitive.Separator.Props) {
+  return (
+    <MenuPrimitive.Separator
+      data-slot="dropdown-menu-separator"
+      className={cn("my-1 h-px bg-border/70", className)}
+      {...props}
+    />
+  )
+}
+
 export {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuGroupLabel,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuRadioItemIndicator,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 }
