@@ -1,16 +1,21 @@
 import { Suspense } from "react"
 import type { Metadata } from "next"
+import { headers } from "next/headers"
 import { ShareView } from "@/components/studio/share-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DEFAULT_STUDIO_STATE } from "@/lib/studio-types"
-import { decodeShareState, formatDisplayUrl } from "@/lib/url-utils"
+import {
+  decodeShareState,
+  formatDisplayUrl,
+  resolvePublicAppOrigin,
+} from "@/lib/url-utils"
 
 export async function generateMetadata({
   searchParams,
 }: {
   searchParams: Promise<{ d?: string | string[] }>
 }): Promise<Metadata> {
-  const resolved = await searchParams
+  const [resolved, reqHeaders] = await Promise.all([searchParams, headers()])
   const rawD =
     typeof resolved.d === "string"
       ? resolved.d
@@ -22,6 +27,10 @@ export async function generateMetadata({
     ? { ...DEFAULT_STUDIO_STATE, ...decoded }
     : DEFAULT_STUDIO_STATE
 
+  const publicOrigin = resolvePublicAppOrigin(
+    reqHeaders.get("x-forwarded-host") ?? reqHeaders.get("host"),
+    reqHeaders.get("x-forwarded-proto")
+  )
   const displayUrl = formatDisplayUrl(state.url)
   const title =
     state.mode === "social"
@@ -32,8 +41,8 @@ export async function generateMetadata({
       ? state.socialBio.trim()
       : `Interactive PrettyLink visual card for ${displayUrl}.`
   const ogImageUrl = rawD
-    ? `/api/og?d=${encodeURIComponent(rawD)}`
-    : "/api/og"
+    ? `${publicOrigin}/api/og?d=${encodeURIComponent(rawD)}`
+    : `${publicOrigin}/api/og`
 
   return {
     title,

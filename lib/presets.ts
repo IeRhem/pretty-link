@@ -26,6 +26,56 @@ export const CALLOUT_PRESET_CHIPS: string[] = [
   "Featured",
 ]
 
+const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+
+export function resolveTabAccentColor(state: StudioState): string {
+  const custom =
+    typeof state.tabAccentColor === "string"
+      ? state.tabAccentColor.trim()
+      : ""
+  if (HEX_COLOR_RE.test(custom)) return custom
+
+  const theme =
+    typeof state.metadata?.themeColor === "string"
+      ? state.metadata.themeColor.trim()
+      : ""
+  if (theme && HEX_COLOR_RE.test(theme)) return theme
+
+  if (state.backgroundType === "color") {
+    const rawBgHex =
+      state.colorFillMode === "solid" ? state.solidColor : state.gradientFrom
+    const bgHex = typeof rawBgHex === "string" ? rawBgHex.trim() : ""
+    if (HEX_COLOR_RE.test(bgHex)) return bgHex
+  }
+
+  return "#38A869"
+}
+
+export function parseSocialStats(
+  metrics: string
+): Array<{ value: string; label: string }> {
+  if (!metrics || !metrics.trim()) return []
+
+  const parts = metrics
+    .split(/[·|,]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  return parts.slice(0, 3).map((part) => {
+    const tokens = part.split(/\s+/).filter(Boolean)
+    if (tokens.length === 1) {
+      return {
+        value: tokens[0]!,
+        label: "Metric",
+      }
+    }
+    return {
+      value: tokens[0]!,
+      label: tokens.slice(1).join(" "),
+    }
+  })
+}
+
 export function getFontStyleCssFamily(fontStyle?: FontStyleId): string {
   switch (fontStyle) {
     case "geist":
@@ -590,15 +640,42 @@ export const CURATED_UNSPLASH_PHOTOS: UnsplashPhoto[] = [
 export interface QuickTemplate {
   id: string
   name: string
-  mode: "web" | "social"
+  mode: StudioMode
   swatch: string
   patch: Partial<StudioState>
+}
+
+export const FRAME_TILT_PRESETS: Array<{
+  id: "flat" | "tilt-left" | "tilt-right" | "float-up"
+  label: string
+  matrix: [number, number, number, number]
+}> = [
+  { id: "flat", label: "Flat", matrix: [1, 0, 0, 1] },
+  { id: "tilt-left", label: "Tilt Left", matrix: [0.95, -0.055, 0.04, 0.96] },
+  { id: "tilt-right", label: "Tilt Right", matrix: [0.95, 0.055, -0.04, 0.96] },
+  { id: "float-up", label: "Float Up", matrix: [0.96, -0.025, -0.045, 0.94] },
+]
+
+export function getFrameTiltMatrix(
+  tilt: StudioState["frameTilt"]
+): [number, number, number, number] {
+  return (
+    FRAME_TILT_PRESETS.find((p) => p.id === tilt)?.matrix ?? [1, 0, 0, 1]
+  )
+}
+
+export function getFrameTiltCssTransform(
+  tilt: StudioState["frameTilt"]
+): string | undefined {
+  if (!tilt || tilt === "flat") return undefined
+  const [a, b, c, d] = getFrameTiltMatrix(tilt)
+  return `matrix(${a}, ${b}, ${c}, ${d}, 0, 0)`
 }
 
 export const QUICK_TEMPLATES: QuickTemplate[] = [
   {
     id: "lerhem-web",
-    name: "Lerhem Offset",
+    name: "Offset",
     mode: "web",
     swatch: "linear-gradient(135deg, #7C3AED 0%, #3B82F6 100%)",
     patch: {
@@ -827,6 +904,52 @@ export const QUICK_TEMPLATES: QuickTemplate[] = [
       socialShowQr: false,
     },
   },
+  {
+    id: "duo-showcase",
+    name: "Duo Device",
+    mode: "web",
+    swatch: "linear-gradient(135deg, #312E81 0%, #0EA5E9 100%)",
+    patch: {
+      mode: "web",
+      aspectRatioId: "twitter-16-9",
+      backgroundType: "color",
+      colorFillMode: "gradient",
+      gradientId: "ocean-glass",
+      gradientFrom: "#1E1B4B",
+      gradientVia: "#1D4ED8",
+      gradientTo: "#0EA5E9",
+      gradientAngle: 135,
+      bgPattern: "dots",
+      bgPatternOpacity: 18,
+      borderStyle: "round",
+      webLayout: "duo",
+      browserChrome: "chrome",
+      chromeTheme: "dark",
+      frameTilt: "tilt-left",
+    },
+  },
+  {
+    id: "release-changelog",
+    name: "Release Notes",
+    mode: "code",
+    swatch: "linear-gradient(135deg, #0F172A 0%, #3B82F6 100%)",
+    patch: {
+      mode: "code",
+      aspectRatioId: "twitter-16-9",
+      backgroundType: "color",
+      colorFillMode: "gradient",
+      gradientId: "midnight-slate",
+      gradientFrom: "#09090B",
+      gradientVia: "#1E1B4B",
+      gradientTo: "#1D4ED8",
+      gradientAngle: 140,
+      bgPattern: "grid",
+      bgPatternOpacity: 16,
+      borderStyle: "round",
+      codeCardStyle: "changelog",
+      codeTheme: "dark",
+    },
+  },
 ]
 
 export const DEFAULT_BATCH_RATIO_IDS: string[] = [
@@ -904,9 +1027,15 @@ export function extractStylePresetPatch(
     frameOffsetX: state.frameOffsetX,
     frameOffsetY: state.frameOffsetY,
     frameShadow: state.frameShadow,
+    frameTilt: state.frameTilt,
     showNavButtons: state.showNavButtons,
     webShowQr: state.webShowQr,
     showCapturedFrom: state.showCapturedFrom,
+    showSpotlight: state.showSpotlight,
+    spotlightX: state.spotlightX,
+    spotlightY: state.spotlightY,
+    spotlightRadius: state.spotlightRadius,
+    spotlightDim: state.spotlightDim,
     tabAccentColor: state.tabAccentColor,
     showCornerIcon: state.showCornerIcon,
     cornerIconPosition: state.cornerIconPosition,
@@ -916,11 +1045,16 @@ export function extractStylePresetPatch(
     showPosterFooter: state.showPosterFooter,
     fontStyle: state.fontStyle,
     showCalloutBadge: state.showCalloutBadge,
+    calloutText: state.calloutText,
     calloutPosition: state.calloutPosition,
     socialCardStyle: state.socialCardStyle,
     socialCardTheme: state.socialCardTheme,
     socialVerified: state.socialVerified,
     socialShowQr: state.socialShowQr,
+    codeCardStyle: state.codeCardStyle,
+    codeTheme: state.codeTheme,
+    codeLanguage: state.codeLanguage,
+    codeShowLineNumbers: state.codeShowLineNumbers,
   }
 }
 
@@ -938,7 +1072,9 @@ export function loadCustomPresets(): CustomPreset[] {
             typeof item === "object" &&
             typeof item.id === "string" &&
             typeof item.name === "string" &&
-            (item.mode === "web" || item.mode === "social") &&
+            (item.mode === "web" ||
+              item.mode === "social" ||
+              item.mode === "code") &&
             typeof item.swatch === "string" &&
             item.patch &&
             typeof item.patch === "object"
@@ -949,14 +1085,54 @@ export function loadCustomPresets(): CustomPreset[] {
   }
 }
 
-export function saveCustomPresets(presets: CustomPreset[]): void {
-  if (typeof window === "undefined") return
+export function saveCustomPresets(presets: CustomPreset[]): boolean {
+  if (typeof window === "undefined") return false
   try {
     window.localStorage.setItem(
       CUSTOM_PRESETS_STORAGE_KEY,
       JSON.stringify(presets)
     )
+    return true
   } catch {
-    // Ignore storage quota errors
+    return false
   }
+}
+
+export function appendCustomPreset(
+  newPreset: CustomPreset,
+  currentList: CustomPreset[] = []
+): { ok: boolean; presets: CustomPreset[] } {
+  const stored = loadCustomPresets()
+  const mergedMap = new Map<string, CustomPreset>()
+  for (const item of currentList) {
+    mergedMap.set(item.id, item)
+  }
+  for (const item of stored) {
+    mergedMap.set(item.id, item)
+  }
+  mergedMap.set(newPreset.id, newPreset)
+  const next = Array.from(mergedMap.values())
+  const ok = saveCustomPresets(next)
+  return { ok, presets: ok ? next : currentList }
+}
+
+export function removeCustomPreset(
+  id: string,
+  currentList: CustomPreset[] = []
+): { ok: boolean; presets: CustomPreset[]; removed?: CustomPreset } {
+  const stored = loadCustomPresets()
+  const mergedMap = new Map<string, CustomPreset>()
+  for (const item of stored) {
+    mergedMap.set(item.id, item)
+  }
+  for (const item of currentList) {
+    if (!mergedMap.has(item.id)) {
+      mergedMap.set(item.id, item)
+    }
+  }
+  const removed = mergedMap.get(id)
+  mergedMap.delete(id)
+  const next = Array.from(mergedMap.values())
+  const ok = saveCustomPresets(next)
+  return { ok, presets: next, removed }
 }

@@ -1,9 +1,13 @@
 "use client"
 
 import * as React from "react"
+import { CodeMockupCard } from "@/components/studio/code-mockup-card"
 import { SocialMockupCard } from "@/components/studio/social-mockup-card"
 import { PosterOverlays, WebMockupCard } from "@/components/studio/web-mockup-card"
-import { resolveAspectDimensions } from "@/lib/presets"
+import {
+  getFrameTiltCssTransform,
+  resolveAspectDimensions,
+} from "@/lib/presets"
 import type { BackgroundPattern, StudioState } from "@/lib/studio-types"
 import { cn } from "@/lib/utils"
 
@@ -147,6 +151,7 @@ export function MockupFrame({
   zoomMultiplier = 1,
   maxWidthPx = 560,
   maxHeightPx = 560,
+  onChange,
   className,
 }: {
   state: StudioState
@@ -155,6 +160,10 @@ export function MockupFrame({
   zoomMultiplier?: number
   maxWidthPx?: number
   maxHeightPx?: number
+  onChange?: (
+    patch: Partial<StudioState>,
+    options?: { forceHistoryStep?: boolean; skipHistory?: boolean }
+  ) => void
   className?: string
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null)
@@ -162,6 +171,21 @@ export function MockupFrame({
     width: maxWidthPx,
     height: maxHeightPx,
   })
+  const [dragVisual, setDragVisual] = React.useState<{
+    active: boolean
+    kind: "frame" | "spotlight"
+    snapX: boolean
+    snapY: boolean
+  }>({ active: false, kind: "frame", snapX: false, snapY: false })
+  const dragSessionRef = React.useRef<{
+    pointerId: number
+    kind: "frame" | "spotlight"
+    startX: number
+    startY: number
+    initialX: number
+    initialY: number
+    committedFirstStep: boolean
+  } | null>(null)
 
   React.useEffect(() => {
     const el = containerRef.current
@@ -265,16 +289,18 @@ export function MockupFrame({
                   }}
                   className="pointer-events-none absolute inset-0 size-full object-cover"
                 />
-                {state.bgDim > 0 && (
-                  <div
-                    style={{
-                      backgroundColor: `rgba(0, 0, 0, ${Math.min(0.85, state.bgDim / 100)})`,
-                    }}
-                    className="pointer-events-none absolute inset-0"
-                  />
-                )}
               </>
             )}
+
+          {/* Dim overlay for color, image, and unsplash backgrounds */}
+          {state.backgroundType !== "none" && state.bgDim > 0 && (
+            <div
+              style={{
+                backgroundColor: `rgba(0, 0, 0, ${Math.min(0.85, state.bgDim / 100)})`,
+              }}
+              className="pointer-events-none absolute inset-0"
+            />
+          )}
 
           {/* Optional subtle SVG noise layer */}
           {state.backgroundType === "color" && state.noiseOverlay && (
@@ -306,22 +332,249 @@ export function MockupFrame({
             previewGeneration={previewGeneration}
           />
 
-          {/* Content layer */}
-          {state.mode === "web" ? (
-            <WebMockupCard
-              state={state}
-              logicalWidth={logicalW}
-              logicalHeight={logicalH}
-              isFetching={isFetching}
-              previewGeneration={previewGeneration}
-            />
-          ) : (
-            <SocialMockupCard
-              state={state}
-              logicalWidth={logicalW}
-              logicalHeight={logicalH}
-              previewGeneration={previewGeneration}
-            />
+          {/* Interactive Draggable & 3D-Tilted Content Layer */}
+          <div
+            onPointerDown={(e) => {
+              if (!onChange || e.button !== 0) return
+              e.currentTarget.setPointerCapture(e.pointerId)
+              dragSessionRef.current = {
+                pointerId: e.pointerId,
+                kind: "frame",
+                startX: e.clientX,
+                startY: e.clientY,
+                initialX: state.frameOffsetX ?? 0,
+                initialY: state.frameOffsetY ?? 0,
+                committedFirstStep: false,
+              }
+              setDragVisual({
+                active: true,
+                kind: "frame",
+                snapX: (state.frameOffsetX ?? 0) === 0,
+                snapY: (state.frameOffsetY ?? 0) === 0,
+              })
+            }}
+            onPointerMove={(e) => {
+              const session = dragSessionRef.current
+              if (
+                !onChange ||
+                !session ||
+                session.pointerId !== e.pointerId ||
+                session.kind !== "frame"
+              ) {
+                return
+              }
+              const dx = e.clientX - session.startX
+              const dy = e.clientY - session.startY
+              if (
+                !session.committedFirstStep &&
+                Math.hypot(dx, dy) < 2
+              ) {
+                return
+              }
+              const rawX = Math.max(
+                -35,
+                Math.min(
+                  35,
+                  Math.round(session.initialX + (dx / Math.max(1, scaledW)) * 100)
+                )
+              )
+              const rawY = Math.max(
+                -35,
+                Math.min(
+                  35,
+                  Math.round(session.initialY + (dy / Math.max(1, scaledH)) * 100)
+                )
+              )
+              const snapX = Math.abs(rawX) <= 2
+              const snapY = Math.abs(rawY) <= 2
+              const nextX = snapX ? 0 : rawX
+              const nextY = snapY ? 0 : rawY
+              setDragVisual({
+                active: true,
+                kind: "frame",
+                snapX,
+                snapY,
+              })
+              if (!session.committedFirstStep) {
+                session.committedFirstStep = true
+                onChange(
+                  { frameOffsetX: nextX, frameOffsetY: nextY },
+                  { forceHistoryStep: true }
+                )
+              } else {
+                onChange(
+                  { frameOffsetX: nextX, frameOffsetY: nextY },
+                  { skipHistory: true }
+                )
+              }
+            }}
+            onPointerUp={(e) => {
+              if (dragSessionRef.current?.pointerId === e.pointerId) {
+                dragSessionRef.current = null
+                setDragVisual((prev) =>
+                  prev.active ? { ...prev, active: false } : prev
+                )
+              }
+            }}
+            onPointerCancel={() => {
+              dragSessionRef.current = null
+              setDragVisual((prev) =>
+                prev.active ? { ...prev, active: false } : prev
+              )
+            }}
+            onDoubleClick={() => {
+              if (!onChange) return
+              if (
+                (state.frameOffsetX ?? 0) !== 0 ||
+                (state.frameOffsetY ?? 0) !== 0
+              ) {
+                onChange(
+                  { frameOffsetX: 0, frameOffsetY: 0 },
+                  { forceHistoryStep: true }
+                )
+              }
+            }}
+            style={{
+              transform: getFrameTiltCssTransform(state.frameTilt),
+              transformOrigin: "center center",
+            }}
+            className={cn(
+              "relative size-full",
+              onChange && "cursor-grab active:cursor-grabbing"
+            )}
+          >
+            {state.mode === "web" ? (
+              <WebMockupCard
+                state={state}
+                logicalWidth={logicalW}
+                logicalHeight={logicalH}
+                isFetching={isFetching}
+                previewGeneration={previewGeneration}
+              />
+            ) : state.mode === "social" ? (
+              <SocialMockupCard
+                state={state}
+                logicalWidth={logicalW}
+                logicalHeight={logicalH}
+                previewGeneration={previewGeneration}
+              />
+            ) : (
+              <CodeMockupCard
+                state={state}
+                logicalWidth={logicalW}
+                logicalHeight={logicalH}
+              />
+            )}
+          </div>
+
+          {/* Spotlight Focus Overlay */}
+          {state.showSpotlight && (
+            <div
+              style={{
+                background: `radial-gradient(circle ${Math.round(((state.spotlightRadius ?? 28) / 100) * minDim)}px at ${state.spotlightX ?? 50}% ${state.spotlightY ?? 50}%, rgba(0,0,0,0) 78%, rgba(0,0,0,${Math.min(0.88, (state.spotlightDim ?? 55) / 100)}) 100%)`,
+              }}
+              className="pointer-events-none absolute inset-0 z-25"
+            >
+              <div
+                onPointerDown={(e) => {
+                  if (!onChange || e.button !== 0) return
+                  e.stopPropagation()
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  dragSessionRef.current = {
+                    pointerId: e.pointerId,
+                    kind: "spotlight",
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    initialX: state.spotlightX ?? 50,
+                    initialY: state.spotlightY ?? 50,
+                    committedFirstStep: false,
+                  }
+                  setDragVisual({
+                    active: true,
+                    kind: "spotlight",
+                    snapX: false,
+                    snapY: false,
+                  })
+                }}
+                onPointerMove={(e) => {
+                  const session = dragSessionRef.current
+                  if (
+                    !onChange ||
+                    !session ||
+                    session.pointerId !== e.pointerId ||
+                    session.kind !== "spotlight"
+                  ) {
+                    return
+                  }
+                  e.stopPropagation()
+                  const dx = e.clientX - session.startX
+                  const dy = e.clientY - session.startY
+                  const nextX = Math.max(
+                    10,
+                    Math.min(
+                      90,
+                      Math.round(
+                        session.initialX + (dx / Math.max(1, scaledW)) * 100
+                      )
+                    )
+                  )
+                  const nextY = Math.max(
+                    10,
+                    Math.min(
+                      90,
+                      Math.round(
+                        session.initialY + (dy / Math.max(1, scaledH)) * 100
+                      )
+                    )
+                  )
+                  if (!session.committedFirstStep) {
+                    session.committedFirstStep = true
+                    onChange(
+                      { spotlightX: nextX, spotlightY: nextY },
+                      { forceHistoryStep: true }
+                    )
+                  } else {
+                    onChange(
+                      { spotlightX: nextX, spotlightY: nextY },
+                      { skipHistory: true }
+                    )
+                  }
+                }}
+                onPointerUp={(e) => {
+                  if (dragSessionRef.current?.pointerId === e.pointerId) {
+                    e.stopPropagation()
+                    dragSessionRef.current = null
+                    setDragVisual((prev) =>
+                      prev.active ? { ...prev, active: false } : prev
+                    )
+                  }
+                }}
+                style={{
+                  left: `${state.spotlightX ?? 50}%`,
+                  top: `${state.spotlightY ?? 50}%`,
+                  width: `${Math.round(((state.spotlightRadius ?? 28) / 100) * minDim * 1.72)}px`,
+                  height: `${Math.round(((state.spotlightRadius ?? 28) / 100) * minDim * 1.72)}px`,
+                  transform: "translate(-50%, -50%)",
+                }}
+                className={cn(
+                  " absolute rounded-full border border-white/40 shadow-[0_0_24px_rgba(255,255,255,0.18)]",
+                  onChange &&
+                    "pointer-events-auto cursor-move hover:border-white/70"
+                )}
+              />
+            </div>
+          )}
+
+          {/* Magnetic Center Snap Hairline Guides */}
+          {dragVisual.active && dragVisual.kind === "frame" && (
+            <div className="pointer-events-none absolute inset-0 z-30">
+              {dragVisual.snapX && (
+                <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 border-l border-dashed border-cyan-300/90 shadow-[0_0_6px_rgba(103,232,249,0.8)]" />
+              )}
+              {dragVisual.snapY && (
+                <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 border-t border-dashed border-cyan-300/90 shadow-[0_0_6px_rgba(103,232,249,0.8)]" />
+              )}
+            </div>
           )}
         </div>
       </div>

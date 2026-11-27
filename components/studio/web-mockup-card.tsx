@@ -438,47 +438,82 @@ export function PosterOverlays({
         </div>
       )}
 
-      {hasCalloutBadge && (
-        <div
-          style={{
-            top:
-              state.showCornerIcon &&
-              state.cornerIconPosition === state.calloutPosition
-                ? `calc(5.5% + ${cornerSize + Math.round(8 * scaleFactor)}px)`
-                : "5.5%",
-            ...(state.calloutPosition === "top-center"
-              ? { left: "50%", transform: "translateX(-50%)" }
-              : state.calloutPosition === "top-right"
-                ? { right: "7.5%" }
-                : { left: "7.5%" }),
-            height: `${Math.round(26 * scaleFactor)}px`,
-            paddingLeft: `${Math.round(9 * scaleFactor)}px`,
-            paddingRight: `${Math.round(11 * scaleFactor)}px`,
-            gap: `${Math.round(6 * scaleFactor)}px`,
-            fontFamily: headingFontFamily,
-          }}
-          className="absolute z-20 flex max-w-[78%] items-center rounded-full bg-zinc-950/88 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-md"
-        >
-          <span
+      {hasCalloutBadge && (() => {
+        const pillH = Math.round(26 * scaleFactor)
+        const sharesCornerWithIcon =
+          state.showCornerIcon &&
+          state.cornerIconPosition === state.calloutPosition
+        const defaultPillY = sharesCornerWithIcon
+          ? Math.round(logicalHeight * 0.055 + cornerSize + Math.round(8 * scaleFactor))
+          : Math.round(logicalHeight * 0.055)
+        const headlineTopY = Math.round(logicalHeight * 0.17)
+        const minHeadlineGap = Math.round(6 * scaleFactor)
+        const hasHeadlineText =
+          state.showPosterHeader &&
+          Boolean(state.posterHeadline.trim() || state.posterAccentText.trim())
+        const overlapsHeadline =
+          hasHeadlineText && defaultPillY + pillH + minHeadlineGap > headlineTopY
+        const resolvedTop = overlapsHeadline
+          ? `${Math.max(Math.round(4 * scaleFactor), headlineTopY - pillH - minHeadlineGap)}px`
+          : sharesCornerWithIcon
+            ? `calc(5.5% + ${cornerSize + Math.round(8 * scaleFactor)}px)`
+            : "5.5%"
+        const shiftBesideCornerIcon =
+          overlapsHeadline &&
+          sharesCornerWithIcon &&
+          Math.max(Math.round(4 * scaleFactor), headlineTopY - pillH - minHeadlineGap) <
+            Math.round(logicalHeight * 0.055) + cornerSize
+
+        return (
+          <div
             style={{
-              width: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
-              height: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
-              backgroundColor: accentColor,
-              boxShadow: `0 0 ${Math.round(8 * scaleFactor)}px ${accentColor}`,
+              top: resolvedTop,
+              ...(state.calloutPosition === "top-center"
+                ? shiftBesideCornerIcon
+                  ? {
+                      left: `calc(50% + ${Math.round(cornerSize / 2 + 10 * scaleFactor)}px)`,
+                    }
+                  : { left: "50%", transform: "translateX(-50%)" }
+                : state.calloutPosition === "top-right"
+                  ? {
+                      right: shiftBesideCornerIcon
+                        ? `calc(7.5% + ${cornerSize + Math.round(10 * scaleFactor)}px)`
+                        : "7.5%",
+                    }
+                  : {
+                      left: shiftBesideCornerIcon
+                        ? `calc(7.5% + ${cornerSize + Math.round(10 * scaleFactor)}px)`
+                        : "7.5%",
+                    }),
+              height: `${pillH}px`,
+              paddingLeft: `${Math.round(9 * scaleFactor)}px`,
+              paddingRight: `${Math.round(11 * scaleFactor)}px`,
+              gap: `${Math.round(6 * scaleFactor)}px`,
+              fontFamily: headingFontFamily,
             }}
-            className="shrink-0 rounded-full"
-          />
-          <span
-            style={{
-              fontSize: `${Math.round(11 * scaleFactor)}px`,
-              letterSpacing: "0.02em",
-            }}
-            className="truncate font-semibold"
+            className="absolute z-20 flex max-w-[78%] items-center rounded-full bg-zinc-950/88 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-md"
           >
-            {state.calloutText.trim()}
-          </span>
-        </div>
-      )}
+            <span
+              style={{
+                width: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
+                height: `${Math.max(5, Math.round(7 * scaleFactor))}px`,
+                backgroundColor: accentColor,
+                boxShadow: `0 0 ${Math.round(8 * scaleFactor)}px ${accentColor}`,
+              }}
+              className="shrink-0 rounded-full"
+            />
+            <span
+              style={{
+                fontSize: `${Math.round(11 * scaleFactor)}px`,
+                letterSpacing: "0.02em",
+              }}
+              className="truncate font-semibold"
+            >
+              {state.calloutText.trim()}
+            </span>
+          </div>
+        )
+      })()}
 
       {state.showPosterHeader && (
         <div
@@ -615,16 +650,38 @@ export function WebMockupCard({
     return check.ok ? check.url.toString() : null
   }, [state.url])
 
+  const isDarkChrome = state.chromeTheme === "dark"
+  const isGlassChrome = state.chromeTheme === "glass"
+
+  const themedScreenshotUrl = React.useMemo(() => {
+    const raw = state.metadata?.screenshotUrl
+    if (!raw) return null
+    const sep = raw.includes("?") ? "&" : "?"
+    return `${raw}${sep}theme=${isDarkChrome ? "dark" : "light"}`
+  }, [state.metadata?.screenshotUrl, isDarkChrome])
+
+  const themedMobileScreenshotUrl = React.useMemo(() => {
+    if (state.customMobileScreenshotUrl) return state.customMobileScreenshotUrl
+    const raw = state.metadata?.screenshotUrl
+    if (!raw) return null
+    const sep = raw.includes("?") ? "&" : "?"
+    return `${raw}${sep}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
+  }, [
+    state.customMobileScreenshotUrl,
+    state.metadata?.screenshotUrl,
+    isDarkChrome,
+  ])
+
   const candidates = React.useMemo(
     () =>
       [
         state.customScreenshotUrl,
-        state.metadata?.screenshotUrl,
+        themedScreenshotUrl,
         state.metadata?.ogImageUrl,
       ].filter((v): v is string => Boolean(v)),
     [
       state.customScreenshotUrl,
-      state.metadata?.screenshotUrl,
+      themedScreenshotUrl,
       state.metadata?.ogImageUrl,
     ]
   )
@@ -648,8 +705,6 @@ export function WebMockupCard({
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500
   const userScale = state.frameScale / 100
-  const isDarkChrome = state.chromeTheme === "dark"
-  const isGlassChrome = state.chromeTheme === "glass"
   const isDefaultLerhem = displayUrl.toLowerCase().includes("lerhem.space")
   const accentColor = resolveTabAccentColor(state)
 
@@ -718,6 +773,19 @@ export function WebMockupCard({
         height: "82%",
         borderTopLeftRadius: `${Math.round(18 * scaleFactor)}px`,
         borderTopRightRadius: `${Math.round(18 * scaleFactor)}px`,
+      }
+    }
+
+    if (state.webLayout === "duo") {
+      return {
+        ...base,
+        position: "absolute",
+        left: `${45 + offX}%`,
+        top: `${47 + offY}%`,
+        transform: `translate(-50%, -50%) scale(${userScale})`,
+        width: "78%",
+        height: "68%",
+        borderRadius: `${Math.round(16 * scaleFactor)}px`,
       }
     }
 
@@ -1353,6 +1421,7 @@ export function WebMockupCard({
   }
 
   return (
+    <>
     <div
       style={frameBoxStyle}
       className={cn(
@@ -1363,7 +1432,11 @@ export function WebMockupCard({
       {renderChrome()}
 
       {/* Viewport */}
-      <div ref={viewportRef} className="relative flex-1 overflow-hidden">
+      <div
+        ref={viewportRef}
+        style={{ colorScheme: isDarkChrome ? "dark" : "light" }}
+        className="relative flex-1 overflow-hidden"
+      >
         <div
           className={cn(
             "flex h-full flex-col justify-between p-5",
@@ -1418,7 +1491,7 @@ export function WebMockupCard({
 
         {liveIframeUrl && !state.customScreenshotUrl && (
           <iframe
-            key={liveIframeUrl}
+            key={`${liveIframeUrl}:${isDarkChrome ? "dark" : "light"}`}
             src={liveIframeUrl}
             title={`Live preview of ${displayUrl}`}
             sandbox="allow-scripts allow-same-origin"
@@ -1429,9 +1502,11 @@ export function WebMockupCard({
               height: `${iframeHeight}px`,
               transform: `scale(${iframeScale})`,
               transformOrigin: "top left",
+              colorScheme: isDarkChrome ? "dark" : "light",
             }}
             className={cn(
-              "pointer-events-none absolute top-0 left-0 z-[5] border-0 bg-white transition-opacity duration-300",
+              "pointer-events-none absolute top-0 left-0 z-[5] border-0 transition-opacity duration-300",
+              isDarkChrome ? "bg-[#09090b]" : "bg-white",
               iframeReady ? "opacity-100" : "opacity-0"
             )}
           />
@@ -1461,5 +1536,118 @@ export function WebMockupCard({
         )}
       </div>
     </div>
+
+    {state.webLayout === "duo" && (
+      <div
+        style={{
+          position: "absolute",
+          left: `${73 + (state.frameOffsetX ?? 0)}%`,
+          top: `${59 + (state.frameOffsetY ?? 0)}%`,
+          transform: `translate(-50%, -50%) scale(${userScale})`,
+          width: "26.5%",
+          height: "64%",
+          borderRadius: `${Math.round(22 * scaleFactor)}px`,
+          boxShadow:
+            state.frameShadow > 0
+              ? `0 ${Math.round(shadowY * 1.1)}px ${Math.round(shadowBlur * 1.1)}px rgba(9, 9, 14, ${Math.min(0.75, shadowAlpha + 0.14)})`
+              : "none",
+        }}
+        className={cn(
+          "z-20 flex flex-col overflow-hidden border-[3px]",
+          isDarkChrome
+            ? "border-zinc-800 bg-[#09090b] text-zinc-50 ring-1 ring-white/15"
+            : "border-zinc-900 bg-white text-zinc-950 ring-1 ring-black/15"
+        )}
+      >
+        {/* Top Phone Dynamic Island / Notch Header */}
+        <div
+          className={cn(
+            "flex shrink-0 flex-col items-center justify-center gap-1 border-b px-2 pt-1.5 pb-1",
+            isDarkChrome
+              ? "border-white/8 bg-[#121216]"
+              : "border-black/8 bg-zinc-50"
+          )}
+        >
+          <div className="h-1.5 w-9 rounded-full bg-zinc-950 ring-1 ring-white/15" />
+          <div
+            className={cn(
+              "flex w-full items-center justify-center rounded-full px-2 py-0.5 font-mono text-[7.5px] font-medium truncate",
+              isDarkChrome
+                ? "bg-white/8 text-zinc-300"
+                : "bg-black/6 text-zinc-700"
+            )}
+          >
+            <span className="truncate">{displayUrl}</span>
+          </div>
+        </div>
+
+        {/* Phone Viewport */}
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            className={cn(
+              "flex h-full flex-col justify-between p-2.5",
+              isDarkChrome
+                ? "bg-[#0b0b0e] text-zinc-50"
+                : "bg-white text-zinc-950"
+            )}
+          >
+            <span className="truncate text-[8px] font-semibold tracking-wider uppercase opacity-70">
+              {state.metadata?.siteName || displayUrl}
+            </span>
+            <div className="my-auto space-y-1">
+              <div className="line-clamp-3 font-heading text-[10px] leading-snug font-bold">
+                {state.metadata?.title || displayUrl}
+              </div>
+              <div className="line-clamp-2 text-[7.5px] leading-tight opacity-65">
+                {state.metadata?.description || "Mobile web preview"}
+              </div>
+            </div>
+            <span
+              style={{
+                backgroundColor: state.metadata?.themeColor || accentColor,
+              }}
+              className="inline-flex w-fit rounded-full px-2 py-0.5 text-[7px] font-semibold text-white"
+            >
+              Open →
+            </span>
+          </div>
+
+          {(themedMobileScreenshotUrl || activeImage) && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={
+                themedMobileScreenshotUrl &&
+                !failedUrls.includes(themedMobileScreenshotUrl)
+                  ? themedMobileScreenshotUrl
+                  : activeImage
+              }
+              alt={`Mobile preview of ${displayUrl}`}
+              onError={() => {
+                if (themedMobileScreenshotUrl) {
+                  markFailed(themedMobileScreenshotUrl)
+                }
+              }}
+              className="absolute inset-0 z-10 size-full object-cover object-top"
+            />
+          )}
+        </div>
+
+        {/* Bottom Home Indicator Bar */}
+        <div
+          className={cn(
+            "flex h-3 shrink-0 items-center justify-center",
+            isDarkChrome ? "bg-[#09090b]" : "bg-white"
+          )}
+        >
+          <div
+            className={cn(
+              "h-1 w-10 rounded-full",
+              isDarkChrome ? "bg-white/30" : "bg-black/25"
+            )}
+          />
+        </div>
+      </div>
+    )}
+    </>
   )
 }

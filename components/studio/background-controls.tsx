@@ -18,7 +18,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
-import { extractBrandPaletteFromState } from "@/lib/brand-palette"
+import {
+  extractBrandPaletteFromState,
+  getModeBrandImageCandidates,
+  hasEligibleBrandSource,
+} from "@/lib/brand-palette"
 import {
   BACKGROUND_PATTERNS,
   CURATED_UNSPLASH_PHOTOS,
@@ -161,14 +165,18 @@ export function BackgroundControls({
   state,
   onChange,
   getUploadResetToken,
+  onNotify,
 }: {
   state: StudioState
   onChange: (patch: Partial<StudioState>) => void
   getUploadResetToken?: () => number
+  onNotify?: (message: string) => void
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const uploadTokenRef = React.useRef(0)
   const patternIntensityLabelId = React.useId()
+  const colorDimLabelId = React.useId()
+  const imageDimLabelId = React.useId()
   const [unsplashQuery, setUnsplashQuery] = React.useState("")
   const [unsplashCategory, setUnsplashCategory] =
     React.useState<(typeof UNSPLASH_CATEGORIES)[number]>("All")
@@ -176,23 +184,61 @@ export function BackgroundControls({
     CURATED_UNSPLASH_PHOTOS
   )
   const [loadingPhotos, setLoadingPhotos] = React.useState(false)
-  const [matchingBrand, setMatchingBrand] = React.useState(false)
+  const [matchingRequest, setMatchingRequest] = React.useState<{
+    token: number
+    contextKey: string
+  } | null>(null)
+  const brandRequestTokenRef = React.useRef(0)
 
-  const hasBrandSource = Boolean(
-    state.customFaviconUrl ||
-      state.metadata?.faviconUrl ||
-      state.metadata?.themeColor ||
-      state.customScreenshotUrl ||
-      state.metadata?.ogImageUrl ||
-      state.socialAvatarUrl ||
-      state.metadata?.avatarUrl
-  )
+  const hasBrandSource = hasEligibleBrandSource(state)
+  const brandContextKey = [
+    state.mode,
+    state.url.trim(),
+    state.backgroundType,
+    state.colorFillMode,
+    state.gradientId,
+    state.gradientFrom,
+    state.gradientVia,
+    state.gradientTo,
+    state.solidColor,
+    state.backgroundImageUrl,
+    state.unsplashPhotoId,
+    state.metadata?.fetchedAt ?? "",
+    state.metadata?.themeColor ?? "",
+    ...getModeBrandImageCandidates(state).map((c) => c ?? ""),
+  ].join("|")
+  const brandContextKeyRef = React.useRef(brandContextKey)
+  const matchingBrand = matchingRequest?.contextKey === brandContextKey
+
+  React.useEffect(() => {
+    brandContextKeyRef.current = brandContextKey
+    brandRequestTokenRef.current += 1
+    const rafId = requestAnimationFrame(() => {
+      setMatchingRequest((prev) =>
+        prev && prev.contextKey !== brandContextKey ? null : prev
+      )
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [brandContextKey])
 
   const handleMatchBrandColors = async () => {
-    setMatchingBrand(true)
+    const requestToken = ++brandRequestTokenRef.current
+    const startContextKey = brandContextKey
+    const startResetToken = getUploadResetToken?.() ?? 0
+    setMatchingRequest({ token: requestToken, contextKey: startContextKey })
     try {
       const palette = await extractBrandPaletteFromState(state)
-      if (!palette) return
+      if (
+        brandRequestTokenRef.current !== requestToken ||
+        brandContextKeyRef.current !== startContextKey ||
+        (getUploadResetToken?.() ?? 0) !== startResetToken
+      ) {
+        return
+      }
+      if (!palette) {
+        onNotify?.("Could not extract complementary colors from this link")
+        return
+      }
       onChange({
         backgroundType: "color",
         gradientId: "brand",
@@ -203,7 +249,9 @@ export function BackgroundControls({
         tabAccentColor: palette.tabAccentColor,
       })
     } finally {
-      setMatchingBrand(false)
+      setMatchingRequest((prev) =>
+        prev?.token === requestToken ? null : prev
+      )
     }
   }
 
@@ -438,6 +486,23 @@ export function BackgroundControls({
             </div>
           )}
 
+          <div className="space-y-1 pt-0.5">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span id={colorDimLabelId}>Dim</span>
+              <span className="font-mono tabular-nums">{state.bgDim}%</span>
+            </div>
+            <Slider
+              aria-labelledby={colorDimLabelId}
+              min={0}
+              max={80}
+              step={5}
+              value={[state.bgDim]}
+              onValueChange={(v) =>
+                onChange({ bgDim: Array.isArray(v) ? (v[0] ?? 0) : v })
+              }
+            />
+          </div>
+
           <div className="flex items-center justify-between pt-0.5">
             <Label className="text-xs text-muted-foreground">Subtle Grain</Label>
             <Switch
@@ -459,7 +524,7 @@ export function BackgroundControls({
             ) : (
               <IconColorPicker className="size-3.5 text-primary" />
             )}
-            <span>Match Brand Colors</span>
+            <span>Complement Website Colors</span>
           </Button>
         </div>
       )}
@@ -533,16 +598,17 @@ export function BackgroundControls({
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[11px] text-muted-foreground">
-                <span>Dim</span>
-                <span className="font-mono">{state.bgDim}%</span>
+                <span id={imageDimLabelId}>Dim</span>
+                <span className="font-mono tabular-nums">{state.bgDim}%</span>
               </div>
               <Slider
+                aria-labelledby={imageDimLabelId}
                 min={0}
-                max={75}
+                max={80}
                 step={5}
                 value={[state.bgDim]}
                 onValueChange={(v) =>
-                  onChange({ bgDim: Array.isArray(v) ? (v[0] ?? 15) : v })
+                  onChange({ bgDim: Array.isArray(v) ? (v[0] ?? 0) : v })
                 }
               />
             </div>
@@ -646,16 +712,17 @@ export function BackgroundControls({
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[11px] text-muted-foreground">
-                <span>Dim</span>
-                <span className="font-mono">{state.bgDim}%</span>
+                <span id={imageDimLabelId}>Dim</span>
+                <span className="font-mono tabular-nums">{state.bgDim}%</span>
               </div>
               <Slider
+                aria-labelledby={imageDimLabelId}
                 min={0}
-                max={75}
+                max={80}
                 step={5}
                 value={[state.bgDim]}
                 onValueChange={(v) =>
-                  onChange({ bgDim: Array.isArray(v) ? (v[0] ?? 15) : v })
+                  onChange({ bgDim: Array.isArray(v) ? (v[0] ?? 0) : v })
                 }
               />
             </div>

@@ -39,15 +39,20 @@ export function parseCssColorToRgb(
       parseInt(h.slice(4, 6), 16),
     ]
   }
-  const rgbMatch = clean.match(
-    /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i
+  const rgbOnlyMatch = clean.match(
+    /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i
   )
+  const rgbaMatch = clean.match(
+    /^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(?:0?\.\d+|1(?:\.0+)?|0|\d{1,3}(?:\.\d+)?%)\s*\)$/i
+  )
+  const rgbMatch = rgbOnlyMatch ?? rgbaMatch
   if (rgbMatch) {
-    return [
-      clampByte(Number(rgbMatch[1])),
-      clampByte(Number(rgbMatch[2])),
-      clampByte(Number(rgbMatch[3])),
-    ]
+    const r = Number(rgbMatch[1])
+    const g = Number(rgbMatch[2])
+    const b = Number(rgbMatch[3])
+    if (r <= 255 && g <= 255 && b <= 255) {
+      return [r, g, b]
+    }
   }
   return null
 }
@@ -128,46 +133,84 @@ function colorDistance(
 
 /**
  * Pure brand palette builder from RGB pixel samples and/or a fallback themeColor string.
+ * Extracts the website's dominant chromatic hue and generates a subdued, dim
+ * complementary backdrop so the website mockup stands out as the visual hero.
  */
 export function buildBrandPaletteFromRgb(
   samples: Array<[number, number, number]>,
   fallbackThemeColor?: string | null
 ): BrandPaletteResult | null {
-  const buckets = new Map<
+  const chromaticBuckets = new Map<
+    string,
+    { count: number; rSum: number; gSum: number; bSum: number; score: number }
+  >()
+  const neutralBuckets = new Map<
     string,
     { count: number; rSum: number; gSum: number; bSum: number; score: number }
   >()
 
   for (const [r, g, b] of samples) {
     const [, s, l] = rgbToHsl(r, g, b)
-    // Skip near-white or near-black background pixels
-    if (l < 0.08 || l > 0.93) continue
-    // Quantize into 24-step RGB buckets
+    // Skip extreme near-black or near-white background pixels
+    if (l < 0.06 || l > 0.94) continue
+
     const qr = Math.round(r / 24) * 24
     const qg = Math.round(g / 24) * 24
     const qb = Math.round(b / 24) * 24
     const key = `${qr},${qg},${qb}`
-    // Boost vibrant brand colors over muted grays
-    const vibrancyWeight = 1 + s * 3.2 + (l >= 0.2 && l <= 0.78 ? 0.6 : 0)
-    const entry = buckets.get(key)
-    if (entry) {
-      entry.count += 1
-      entry.rSum += r
-      entry.gSum += g
-      entry.bSum += b
-      entry.score += vibrancyWeight
+
+    // Separate truly chromatic pixels from low-saturation grays so gray background
+    // noise is never mistaken for a chromatic hue
+    if (s >= 0.14 && l >= 0.1 && l <= 0.88) {
+      const midLightBonus = 1 - Math.abs(l - 0.5) * 0.9
+      const weight = (0.5 + s * s * 4.5) * Math.max(0.35, midLightBonus)
+      const entry = chromaticBuckets.get(key)
+      if (entry) {
+        entry.count += 1
+        entry.rSum += r
+        entry.gSum += g
+        entry.bSum += b
+        entry.score += weight
+      } else {
+        chromaticBuckets.set(key, {
+          count: 1,
+          rSum: r,
+          gSum: g,
+          bSum: b,
+          score: weight,
+        })
+      }
     } else {
-      buckets.set(key, {
-        count: 1,
-        rSum: r,
-        gSum: g,
-        bSum: b,
-        score: vibrancyWeight,
-      })
+      const entry = neutralBuckets.get(key)
+      if (entry) {
+        entry.count += 1
+        entry.rSum += r
+        entry.gSum += g
+        entry.bSum += b
+        entry.score += 1
+      } else {
+        neutralBuckets.set(key, {
+          count: 1,
+          rSum: r,
+          gSum: g,
+          bSum: b,
+          score: 1,
+        })
+      }
     }
   }
 
-  const ranked = Array.from(buckets.values())
+  const rankedChromatic = Array.from(chromaticBuckets.values())
+    .sort((a, b) => b.score - a.score)
+    .map(
+      (b): [number, number, number] => [
+        clampByte(b.rSum / b.count),
+        clampByte(b.gSum / b.count),
+        clampByte(b.bSum / b.count),
+      ]
+    )
+
+  const rankedNeutral = Array.from(neutralBuckets.values())
     .sort((a, b) => b.score - a.score)
     .map(
       (b): [number, number, number] => [
@@ -178,69 +221,88 @@ export function buildBrandPaletteFromRgb(
     )
 
   const themeRgb = parseCssColorToRgb(fallbackThemeColor)
-  const primaryRgb = ranked[0] ?? themeRgb
+  const themeHsl = themeRgb
+    ? rgbToHsl(themeRgb[0], themeRgb[1], themeRgb[2])
+    : null
+  const chromaticThemeRgb =
+    themeRgb && themeHsl && themeHsl[1] >= 0.14 ? themeRgb : null
+
+  const primaryRgb =
+    rankedChromatic[0] ??
+    chromaticThemeRgb ??
+    themeRgb ??
+    rankedNeutral[0] ??
+    null
   if (!primaryRgb) return null
 
   const [h1, s1, l1] = rgbToHsl(primaryRgb[0], primaryRgb[1], primaryRgb[2])
-  // Ensure primary brand color has rich studio presence
-  const tunedPrimary = hslToRgb(
-    h1,
-    Math.max(s1, 0.42),
-    Math.max(0.28, Math.min(0.62, l1))
+  const isMonochromeSite = s1 < 0.14
+
+  if (isMonochromeSite) {
+    // Monochrome / neutral site: produce a dim, understated slate-charcoal complementary backdrop
+    const baseHue = 222
+    const fromRgb = hslToRgb(baseHue, 0.14, 0.22)
+    const viaRgb = hslToRgb(baseHue + 12, 0.16, 0.17)
+    const toRgb = hslToRgb(baseHue + 24, 0.18, 0.13)
+    const accentRgb = hslToRgb(baseHue, 0.28, 0.42)
+    return {
+      gradientFrom: rgbToHex(fromRgb[0], fromRgb[1], fromRgb[2]),
+      gradientVia: rgbToHex(viaRgb[0], viaRgb[1], viaRgb[2]),
+      gradientTo: rgbToHex(toRgb[0], toRgb[1], toRgb[2]),
+      solidColor: rgbToHex(viaRgb[0], viaRgb[1], viaRgb[2]),
+      tabAccentColor: rgbToHex(accentRgb[0], accentRgb[1], accentRgb[2]),
+    }
+  }
+
+  // Secondary chromatic stop from the site (if present and distinct)
+  const secondaryCandidate = rankedChromatic.find(
+    (c) => colorDistance(c, primaryRgb) >= 64
   )
 
-  // Look for a distinct secondary brand stop from the image samples
-  const secondaryCandidate = ranked.find(
-    (c) => colorDistance(c, primaryRgb) >= 68
-  )
-
-  let tunedSecondary: [number, number, number]
-  let tunedVia: [number, number, number]
+  // Compute a complementary / split-complementary hue so the background complements
+  // the website rather than matching/competing with it
+  const compHueCenter = (h1 + 180) % 360
+  const compHueStart = (h1 + 152) % 360
+  let compHueEnd = (h1 + 208) % 360
 
   if (secondaryCandidate) {
-    const [h2, s2, l2] = rgbToHsl(
+    const [h2] = rgbToHsl(
       secondaryCandidate[0],
       secondaryCandidate[1],
       secondaryCandidate[2]
     )
-    tunedSecondary = hslToRgb(
-      h2,
-      Math.max(s2, 0.38),
-      Math.max(0.22, Math.min(0.58, l2))
-    )
-    tunedVia = [
-      clampByte((tunedPrimary[0] + tunedSecondary[0]) / 2),
-      clampByte((tunedPrimary[1] + tunedSecondary[1]) / 2),
-      clampByte((tunedPrimary[2] + tunedSecondary[2]) / 2),
-    ]
-  } else {
-    // Analogous studio gradient derived from primary brand hue
-    tunedVia = hslToRgb(
-      h1 + 18,
-      Math.max(0.48, Math.min(0.88, s1 + 0.1)),
-      Math.max(0.24, Math.min(0.54, l1 - 0.04))
-    )
-    tunedSecondary = hslToRgb(
-      h1 + 38,
-      Math.max(0.52, Math.min(0.92, s1 + 0.14)),
-      Math.max(0.18, Math.min(0.46, l1 - 0.12))
-    )
+    compHueEnd = (h2 + 180) % 360
   }
 
-  const fromHex = rgbToHex(tunedPrimary[0], tunedPrimary[1], tunedPrimary[2])
-  const viaHex = rgbToHex(tunedVia[0], tunedVia[1], tunedVia[2])
-  const toHex = rgbToHex(
-    tunedSecondary[0],
-    tunedSecondary[1],
-    tunedSecondary[2]
+  // Keep saturation subdued (0.22 - 0.34) and lightness dim (0.14 - 0.24)
+  // so the backdrop feels atmospheric and never overpowers the website card
+  const mutedSat = Math.max(0.22, Math.min(0.34, s1 * 0.48))
+  const dimLightStart = Math.max(0.2, Math.min(0.25, 0.22 + (l1 - 0.5) * 0.04))
+  const dimLightMid = Math.max(0.16, dimLightStart - 0.04)
+  const dimLightEnd = Math.max(0.12, dimLightStart - 0.08)
+
+  const compStartRgb = hslToRgb(compHueStart, mutedSat, dimLightStart)
+  const compMidRgb = hslToRgb(compHueCenter, mutedSat * 0.95, dimLightMid)
+  const compEndRgb = hslToRgb(compHueEnd, mutedSat * 1.05, dimLightEnd)
+
+  // Subtle, readable brand-derived accent for the browser URL pill
+  const tabAccentRgb = hslToRgb(
+    h1,
+    Math.max(0.32, Math.min(0.55, s1 * 0.7)),
+    0.36
   )
+
+  const fromHex = rgbToHex(compStartRgb[0], compStartRgb[1], compStartRgb[2])
+  const viaHex = rgbToHex(compMidRgb[0], compMidRgb[1], compMidRgb[2])
+  const toHex = rgbToHex(compEndRgb[0], compEndRgb[1], compEndRgb[2])
+  const accentHex = rgbToHex(tabAccentRgb[0], tabAccentRgb[1], tabAccentRgb[2])
 
   return {
     gradientFrom: fromHex,
     gradientVia: viaHex,
     gradientTo: toHex,
-    solidColor: fromHex,
-    tabAccentColor: fromHex,
+    solidColor: viaHex,
+    tabAccentColor: accentHex,
   }
 }
 
@@ -253,10 +315,26 @@ function sampleImageRgbPixels(
     const img = new Image()
     img.crossOrigin = "anonymous"
     img.referrerPolicy = "no-referrer"
-    const timer = setTimeout(() => resolve(null), timeoutMs)
+    let settled = false
+
+    const cleanupAndResolve = (
+      result: Array<[number, number, number]> | null,
+      timedOut = false
+    ) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      img.onload = null
+      img.onerror = null
+      if (timedOut) {
+        img.src = ""
+      }
+      resolve(result)
+    }
+
+    const timer = setTimeout(() => cleanupAndResolve(null, true), timeoutMs)
 
     img.onload = () => {
-      clearTimeout(timer)
       try {
         const size = 36
         const canvas = document.createElement("canvas")
@@ -264,7 +342,7 @@ function sampleImageRgbPixels(
         canvas.height = size
         const ctx = canvas.getContext("2d")
         if (!ctx) {
-          resolve(null)
+          cleanupAndResolve(null)
           return
         }
         ctx.drawImage(img, 0, 0, size, size)
@@ -275,46 +353,67 @@ function sampleImageRgbPixels(
           if (a < 110) continue
           samples.push([data[i]!, data[i + 1]!, data[i + 2]!])
         }
-        resolve(samples.length > 0 ? samples : null)
+        cleanupAndResolve(samples.length > 0 ? samples : null)
       } catch {
-        resolve(null)
+        cleanupAndResolve(null)
       }
     }
 
     img.onerror = () => {
-      clearTimeout(timer)
-      resolve(null)
+      cleanupAndResolve(null)
     }
 
     img.src = src
   })
 }
 
+export function getModeBrandImageCandidates(
+  state: StudioState
+): Array<string | null | undefined> {
+  if (state.mode === "social") {
+    return [
+      state.socialCoverUrl,
+      state.metadata?.coverUrl,
+      state.socialAvatarUrl,
+      state.metadata?.avatarUrl,
+      state.customFaviconUrl,
+      state.metadata?.faviconUrl,
+    ]
+  }
+  if (state.webLayout === "tab") {
+    return [
+      state.customFaviconUrl,
+      state.metadata?.faviconUrl,
+      state.metadata?.ogImageUrl,
+      state.metadata?.screenshotUrl,
+      state.customScreenshotUrl,
+    ]
+  }
+  return [
+    state.customScreenshotUrl,
+    state.metadata?.screenshotUrl,
+    state.metadata?.ogImageUrl,
+    state.customFaviconUrl,
+    state.metadata?.faviconUrl,
+  ]
+}
+
+export function hasEligibleBrandSource(state: StudioState): boolean {
+  if (parseCssColorToRgb(state.metadata?.themeColor)) {
+    return true
+  }
+  return getModeBrandImageCandidates(state).some((url) => Boolean(url?.trim()))
+}
+
 export async function extractBrandPaletteFromState(
   state: StudioState
 ): Promise<BrandPaletteResult | null> {
-  const rawCandidates =
-    state.mode === "social"
-      ? [
-          state.socialAvatarUrl,
-          state.metadata?.avatarUrl,
-          state.customFaviconUrl,
-          state.metadata?.faviconUrl,
-          state.socialCoverUrl,
-          state.metadata?.coverUrl,
-        ]
-      : [
-          state.customFaviconUrl,
-          state.metadata?.faviconUrl,
-          state.customScreenshotUrl,
-          state.metadata?.ogImageUrl,
-          state.metadata?.screenshotUrl,
-        ]
+  const rawCandidates = getModeBrandImageCandidates(state)
 
   const candidates = rawCandidates
     .map((url) => {
       if (!url) return null
-      if (url.startsWith("data:") || url.startsWith("/api/image-proxy?")) {
+      if (url.startsWith("data:") || url.startsWith("/api/")) {
         return url
       }
       return toImageProxyUrl(url) ?? url
@@ -324,10 +423,7 @@ export async function extractBrandPaletteFromState(
   for (const candidate of candidates) {
     const samples = await sampleImageRgbPixels(candidate)
     if (samples && samples.length > 0) {
-      const palette = buildBrandPaletteFromRgb(
-        samples,
-        state.metadata?.themeColor
-      )
+      const palette = buildBrandPaletteFromRgb(samples)
       if (palette) return palette
     }
   }

@@ -132,6 +132,9 @@ export function SocialMockupCard({
   const shadowAlpha = 0.16 + (state.frameShadow / 100) * 0.4
   const shadowBlur = Math.round(40 * scaleFactor * (state.frameShadow / 100))
   const shadowY = Math.round(18 * scaleFactor * (state.frameShadow / 100))
+  const offX = ((state.frameOffsetX ?? 0) / 100) * logicalWidth
+  const offY = ((state.frameOffsetY ?? 0) / 100) * logicalHeight
+  const cardTransform = `translate(${offX}px, ${offY}px) scale(${userScale})`
 
   const targetUrl = normalizeUrl(state.url) || "https://www.lerhem.space"
   const displayUrl = formatDisplayUrl(state.url)
@@ -195,7 +198,7 @@ export function SocialMockupCard({
       <div className="flex size-full items-center justify-center p-6">
         <div
           style={{
-            transform: `scale(${userScale})`,
+            transform: cardTransform,
             boxShadow:
               state.frameShadow > 0
                 ? `0 ${shadowY}px ${shadowBlur}px rgba(0, 0, 0, ${shadowAlpha})`
@@ -261,7 +264,7 @@ export function SocialMockupCard({
       <div className="flex size-full items-center justify-center p-4">
         <div
           style={{
-            transform: `scale(${userScale})`,
+            transform: cardTransform,
             boxShadow:
               state.frameShadow > 0
                 ? `0 ${shadowY}px ${shadowBlur}px rgba(0, 0, 0, ${shadowAlpha})`
@@ -371,7 +374,7 @@ export function SocialMockupCard({
     <div className="flex size-full items-center justify-center p-4">
       <div
         style={{
-          transform: `scale(${userScale})`,
+          transform: cardTransform,
           boxShadow:
             state.frameShadow > 0
               ? `0 ${shadowY}px ${shadowBlur}px rgba(0, 0, 0, ${shadowAlpha})`

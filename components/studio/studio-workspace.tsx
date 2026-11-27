@@ -9,13 +9,14 @@ import { PreviewStage } from "@/components/studio/preview-stage"
 import { extractBrandPaletteFromState } from "@/lib/brand-palette"
 import { copyStudioImageToClipboard } from "@/lib/export-canvas"
 import {
+  appendCustomPreset,
   ASPECT_RATIOS,
   BACKGROUND_PATTERNS,
   computeStyleSwatch,
   extractStylePresetPatch,
   GRADIENT_PRESETS,
   loadCustomPresets,
-  saveCustomPresets,
+  removeCustomPreset,
   type CustomPreset,
 } from "@/lib/presets"
 import { detectSocialPlatform, SOCIAL_PLATFORMS } from "@/lib/social-platforms"
@@ -31,6 +32,63 @@ import {
   encodeShareState,
   SHARE_STATE_MAX_LENGTH,
 } from "@/lib/url-utils"
+
+const LAST_URL_STORAGE_KEY = "prettylink:last-url:v1"
+const MAX_HISTORY_SNAPSHOTS = 50
+const MAX_HISTORY_IMAGE_BYTES = 15 * 1024 * 1024 // 15 MB image-payload budget across retained history
+
+function isEditableTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  const tag = el.tagName.toLowerCase()
+  return (
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select" ||
+    el.isContentEditable
+  )
+}
+
+function estimateSnapshotImageBytes(snapshot: StudioState): number {
+  const fields = [
+    snapshot.backgroundImageUrl,
+    snapshot.customScreenshotUrl,
+    snapshot.customMobileScreenshotUrl,
+    snapshot.customFaviconUrl,
+    snapshot.socialAvatarUrl,
+    snapshot.socialCoverUrl,
+    snapshot.metadata?.screenshotUrl,
+    snapshot.metadata?.ogImageUrl,
+    snapshot.metadata?.faviconUrl,
+    snapshot.metadata?.avatarUrl,
+    snapshot.metadata?.coverUrl,
+  ]
+  let total = 0
+  for (const value of fields) {
+    if (value) {
+      total += value.length
+    }
+  }
+  return total
+}
+
+function enforceHistoryLimits(snapshots: StudioState[]): StudioState[] {
+  const next =
+    snapshots.length > MAX_HISTORY_SNAPSHOTS
+      ? snapshots.slice(snapshots.length - MAX_HISTORY_SNAPSHOTS)
+      : [...snapshots]
+
+  let totalImageBytes = next.reduce(
+    (sum, item) => sum + estimateSnapshotImageBytes(item),
+    0
+  )
+  while (next.length > 0 && totalImageBytes > MAX_HISTORY_IMAGE_BYTES) {
+    const evicted = next.shift()
+    if (evicted) {
+      totalImageBytes -= estimateSnapshotImageBytes(evicted)
+    }
+  }
+  return next
+}
 
 export function StudioWorkspace() {
   const searchParams = useSearchParams()
@@ -69,10 +127,18 @@ export function StudioWorkspace() {
   const stateRef = React.useRef<StudioState>(state)
   const lastEditTimeRef = React.useRef<number>(0)
   const uploadResetTokenRef = React.useRef(0)
+  const bgOperationTokenRef = React.useRef(0)
+  const urlRevisionRef = React.useRef(0)
+  const pasteTokenRef = React.useRef(0)
+  const brandPaletteSessionRef = React.useRef(0)
   const assetMutationTokenRef = React.useRef({
     screenshot: 0,
     avatar: 0,
     cover: 0,
+  })
+  const userOverrodeSocialAssetsRef = React.useRef({
+    avatar: false,
+    cover: false,
   })
   const drawerRef = React.useRef<HTMLDivElement>(null)
   const stageWrapperRef = React.useRef<HTMLDivElement>(null)
@@ -93,13 +159,53 @@ export function StudioWorkspace() {
     const syncPresets = () => {
       setCustomPresets(loadCustomPresets())
     }
-    const rafId = requestAnimationFrame(syncPresets)
+    const rafId = requestAnimationFrame(() => {
+      syncPresets()
+      if (!remixParam) {
+        try {
+          const savedUrl = window.localStorage
+            .getItem(LAST_URL_STORAGE_KEY)
+            ?.trim()
+          if (savedUrl && savedUrl !== stateRef.current.url.trim()) {
+            currentUrlRef.current = savedUrl
+            const detected = detectSocialPlatform(savedUrl)
+            setState((prev) => ({
+              ...prev,
+              url: savedUrl,
+              metadata: null,
+              ...(detected.platform !== "custom"
+                ? {
+                    socialPlatform: detected.platform,
+                    socialHandle: detected.handle,
+                    socialDisplayName: detected.displayName,
+                    socialCtaLabel:
+                      SOCIAL_PLATFORMS[detected.platform]?.defaultCta ??
+                      "Visit Link",
+                  }
+                : {}),
+            }))
+          }
+        } catch {
+          // Ignore storage read errors
+        }
+      }
+    })
     window.addEventListener("storage", syncPresets)
     return () => {
       cancelAnimationFrame(rafId)
       window.removeEventListener("storage", syncPresets)
     }
-  }, [])
+  }, [remixParam])
+
+  React.useEffect(() => {
+    const trimmed = state.url.trim()
+    if (!trimmed) return
+    try {
+      window.localStorage.setItem(LAST_URL_STORAGE_KEY, trimmed)
+    } catch {
+      // Ignore storage write errors
+    }
+  }, [state.url])
 
   const notify = React.useCallback(
     (
@@ -125,16 +231,14 @@ export function StudioWorkspace() {
       const now = Date.now()
       const shouldCoalesce =
         !forceNewStep && now - lastEditTimeRef.current < 400
-      lastEditTimeRef.current = now
+      // A forced step closes the coalescing window so the next ordinary edit starts its own step
+      lastEditTimeRef.current = forceNewStep ? 0 : now
 
       setHistory((prev) => {
         if (shouldCoalesce && prev.past.length > 0) {
           return prev.future.length > 0 ? { ...prev, future: [] } : prev
         }
-        const nextPast =
-          prev.past.length >= 50
-            ? [...prev.past.slice(prev.past.length - 49), snapshot]
-            : [...prev.past, snapshot]
+        const nextPast = enforceHistoryLimits([...prev.past, snapshot])
         return { past: nextPast, future: [] }
       })
     },
@@ -142,12 +246,15 @@ export function StudioWorkspace() {
   )
 
   const getUploadResetToken = React.useCallback(
-    () => uploadResetTokenRef.current,
+    () => uploadResetTokenRef.current + bgOperationTokenRef.current,
     []
   )
 
   const updateState = React.useCallback(
-    (patch: Partial<StudioState>, options?: { forceHistoryStep?: boolean }) => {
+    (
+      patch: Partial<StudioState>,
+      options?: { forceHistoryStep?: boolean; skipHistory?: boolean }
+    ) => {
       if (patch.customFaviconUrl !== undefined) {
         setPreviewGeneration((g) => g + 1)
       }
@@ -156,12 +263,57 @@ export function StudioWorkspace() {
       }
       if (patch.socialAvatarUrl !== undefined) {
         assetMutationTokenRef.current.avatar += 1
+        userOverrodeSocialAssetsRef.current.avatar = Boolean(
+          patch.socialAvatarUrl
+        )
       }
       if (patch.socialCoverUrl !== undefined) {
         assetMutationTokenRef.current.cover += 1
+        userOverrodeSocialAssetsRef.current.cover = Boolean(
+          patch.socialCoverUrl
+        )
+      }
+      if (
+        patch.backgroundType !== undefined ||
+        patch.colorFillMode !== undefined ||
+        patch.gradientId !== undefined ||
+        patch.gradientFrom !== undefined ||
+        patch.gradientVia !== undefined ||
+        patch.gradientTo !== undefined ||
+        patch.gradientAngle !== undefined ||
+        patch.solidColor !== undefined ||
+        patch.backgroundImageUrl !== undefined ||
+        patch.unsplashPhotoId !== undefined ||
+        patch.unsplashPhotographer !== undefined ||
+        patch.bgPattern !== undefined ||
+        patch.bgPatternOpacity !== undefined ||
+        patch.bgBlur !== undefined ||
+        patch.bgDim !== undefined ||
+        patch.noiseOverlay !== undefined
+      ) {
+        bgOperationTokenRef.current += 1
+      }
+      if (
+        patch.mode !== undefined ||
+        patch.customFaviconUrl !== undefined ||
+        patch.customScreenshotUrl !== undefined ||
+        patch.socialAvatarUrl !== undefined ||
+        patch.socialCoverUrl !== undefined ||
+        patch.backgroundType !== undefined ||
+        patch.colorFillMode !== undefined ||
+        patch.gradientId !== undefined ||
+        patch.gradientFrom !== undefined ||
+        patch.gradientVia !== undefined ||
+        patch.gradientTo !== undefined ||
+        patch.solidColor !== undefined ||
+        patch.tabAccentColor !== undefined
+      ) {
+        brandPaletteSessionRef.current += 1
       }
       if (patch.url !== undefined) {
         if (patch.url.trim() !== currentUrlRef.current.trim()) {
+          urlRevisionRef.current += 1
+          brandPaletteSessionRef.current += 1
           fetchAbortRef.current?.abort()
           fetchAbortRef.current = null
           lastFetchedUrlRef.current = ""
@@ -169,20 +321,39 @@ export function StudioWorkspace() {
         }
         currentUrlRef.current = patch.url
       }
-      recordUndoSnapshot(stateRef.current, options?.forceHistoryStep ?? false)
-      setState((prev) => {
-      const next = { ...prev, ...patch }
-      if (patch.url !== undefined && patch.url.trim() !== prev.url.trim()) {
-        next.metadata = null
-        next.customScreenshotUrl = ""
-        if (
-          prev.url === "www.lerhem.space" &&
-          prev.tabTitle === "Lerhem Studio" &&
-          patch.tabTitle === undefined
-        ) {
-          next.tabTitle = ""
-        }
+      if (!options?.skipHistory) {
+        recordUndoSnapshot(
+          stateRef.current,
+          options?.forceHistoryStep ?? false
+        )
       }
+      setState((prev) => {
+        const next = { ...prev, ...patch }
+        if (patch.url !== undefined && patch.url.trim() !== prev.url.trim()) {
+          next.metadata = null
+          if (patch.customScreenshotUrl === undefined) {
+            next.customScreenshotUrl = ""
+          }
+          if (
+            patch.socialAvatarUrl === undefined &&
+            !userOverrodeSocialAssetsRef.current.avatar
+          ) {
+            next.socialAvatarUrl = ""
+          }
+          if (
+            patch.socialCoverUrl === undefined &&
+            !userOverrodeSocialAssetsRef.current.cover
+          ) {
+            next.socialCoverUrl = ""
+          }
+          if (
+            prev.url === "www.lerhem.space" &&
+            prev.tabTitle === "Lerhem Studio" &&
+            patch.tabTitle === undefined
+          ) {
+            next.tabTitle = ""
+          }
+        }
       // Auto-sync social platform detection when URL changes
       if (patch.url !== undefined && patch.socialPlatform === undefined) {
         const detected = detectSocialPlatform(patch.url)
@@ -200,71 +371,137 @@ export function StudioWorkspace() {
     })
   }, [recordUndoSnapshot])
 
+  const applyHistorySnapshot = React.useCallback(
+    (
+      targetSnapshot: StudioState,
+      updateStacks: (current: StudioState) => void
+    ) => {
+      const current = stateRef.current
+      lastEditTimeRef.current = 0
+      uploadResetTokenRef.current += 1
+      brandPaletteSessionRef.current += 1
+
+      if (targetSnapshot.customScreenshotUrl !== current.customScreenshotUrl) {
+        assetMutationTokenRef.current.screenshot += 1
+      }
+      if (targetSnapshot.socialAvatarUrl !== current.socialAvatarUrl) {
+        assetMutationTokenRef.current.avatar += 1
+      }
+      if (targetSnapshot.socialCoverUrl !== current.socialCoverUrl) {
+        assetMutationTokenRef.current.cover += 1
+      }
+
+      const targetTrimmed = targetSnapshot.url.trim()
+      const currentTrimmed = current.url.trim()
+      const sameUrl = targetTrimmed === currentTrimmed
+      if (!sameUrl) {
+        urlRevisionRef.current += 1
+      }
+
+      // Preserve already-fetched metadata and fetched social preview fields when restoring
+      // a same-URL edit whose snapshot predated fetch completion, while keeping user-edited fields from targetSnapshot
+      const effectiveMetadata =
+        targetSnapshot.metadata ?? (sameUrl ? current.metadata : null)
+      const backfillFromCurrentFetch =
+        sameUrl && !targetSnapshot.metadata && Boolean(current.metadata)
+      const detectedForUrl = detectSocialPlatform(targetSnapshot.url)
+
+      const isPreFetchDisplayName =
+        targetSnapshot.socialDisplayName ===
+          DEFAULT_STUDIO_STATE.socialDisplayName ||
+        targetSnapshot.socialDisplayName === detectedForUrl.displayName
+      const isPreFetchHandle =
+        targetSnapshot.socialHandle === DEFAULT_STUDIO_STATE.socialHandle ||
+        targetSnapshot.socialHandle === detectedForUrl.handle
+      const isPreFetchBio =
+        !targetSnapshot.socialBio ||
+        targetSnapshot.socialBio === DEFAULT_STUDIO_STATE.socialBio
+      const isPreFetchMetrics =
+        !targetSnapshot.socialMetrics ||
+        targetSnapshot.socialMetrics === DEFAULT_STUDIO_STATE.socialMetrics
+
+      const restoredState: StudioState = backfillFromCurrentFetch
+        ? {
+            ...targetSnapshot,
+            metadata: effectiveMetadata,
+            socialDisplayName:
+              isPreFetchDisplayName && current.metadata?.title
+                ? current.metadata.title
+                : targetSnapshot.socialDisplayName,
+            socialHandle:
+              isPreFetchHandle && current.metadata?.handle
+                ? current.metadata.handle
+                : targetSnapshot.socialHandle,
+            socialBio:
+              isPreFetchBio && current.metadata?.description !== undefined
+                ? current.metadata.description
+                : targetSnapshot.socialBio,
+            socialMetrics:
+              isPreFetchMetrics && current.metadata?.metrics !== undefined
+                ? (current.metadata.metrics ?? "")
+                : targetSnapshot.socialMetrics,
+            socialAvatarUrl:
+              targetSnapshot.socialAvatarUrl ||
+              (current.metadata?.avatarUrl ?? ""),
+            socialCoverUrl:
+              targetSnapshot.socialCoverUrl ||
+              (current.metadata?.coverUrl ?? ""),
+          }
+        : effectiveMetadata !== targetSnapshot.metadata
+          ? { ...targetSnapshot, metadata: effectiveMetadata }
+          : targetSnapshot
+
+      userOverrodeSocialAssetsRef.current.avatar = Boolean(
+        restoredState.socialAvatarUrl &&
+          restoredState.socialAvatarUrl !== effectiveMetadata?.avatarUrl
+      )
+      userOverrodeSocialAssetsRef.current.cover = Boolean(
+        restoredState.socialCoverUrl &&
+          restoredState.socialCoverUrl !== effectiveMetadata?.coverUrl
+      )
+
+      currentUrlRef.current = restoredState.url
+
+      if (!sameUrl) {
+        fetchAbortRef.current?.abort()
+        fetchAbortRef.current = null
+        setIsFetching(false)
+        lastFetchedUrlRef.current = effectiveMetadata ? targetTrimmed : ""
+      } else if (effectiveMetadata) {
+        lastFetchedUrlRef.current = targetTrimmed
+      } else if (!fetchAbortRef.current) {
+        // Unfetched same-URL design with no active request: allow fetching
+        lastFetchedUrlRef.current = ""
+      }
+
+      updateStacks(current)
+      setState(restoredState)
+      setPreviewGeneration((g) => g + 1)
+    },
+    []
+  )
+
   const handleUndo = React.useCallback(() => {
     if (history.past.length === 0) return
     const previous = history.past[history.past.length - 1]!
-    const current = stateRef.current
-    lastEditTimeRef.current = 0
-    uploadResetTokenRef.current += 1
-    assetMutationTokenRef.current.screenshot += 1
-    assetMutationTokenRef.current.avatar += 1
-    assetMutationTokenRef.current.cover += 1
-    fetchAbortRef.current?.abort()
-    fetchAbortRef.current = null
-    setIsFetching(false)
-    currentUrlRef.current = previous.url
-    const prevTrimmed = previous.url.trim()
-    const hasRestoredPreviewOrAssets = Boolean(
-      previous.metadata ||
-        previous.customScreenshotUrl ||
-        previous.socialAvatarUrl ||
-        previous.socialCoverUrl
-    )
-    if (hasRestoredPreviewOrAssets || prevTrimmed === current.url.trim()) {
-      lastFetchedUrlRef.current = prevTrimmed
-    } else {
-      lastFetchedUrlRef.current = ""
-    }
-    setHistory((prev) => ({
-      past: prev.past.slice(0, -1),
-      future: [current, ...prev.future].slice(0, 50),
-    }))
-    setState(previous)
-    setPreviewGeneration((g) => g + 1)
-  }, [history.past])
+    applyHistorySnapshot(previous, (current) => {
+      setHistory((prev) => ({
+        past: prev.past.slice(0, -1),
+        future: [current, ...prev.future].slice(0, 50),
+      }))
+    })
+  }, [history.past, applyHistorySnapshot])
 
   const handleRedo = React.useCallback(() => {
     if (history.future.length === 0) return
     const nextState = history.future[0]!
-    const current = stateRef.current
-    lastEditTimeRef.current = 0
-    uploadResetTokenRef.current += 1
-    assetMutationTokenRef.current.screenshot += 1
-    assetMutationTokenRef.current.avatar += 1
-    assetMutationTokenRef.current.cover += 1
-    fetchAbortRef.current?.abort()
-    fetchAbortRef.current = null
-    setIsFetching(false)
-    currentUrlRef.current = nextState.url
-    const nextTrimmed = nextState.url.trim()
-    const hasRestoredPreviewOrAssets = Boolean(
-      nextState.metadata ||
-        nextState.customScreenshotUrl ||
-        nextState.socialAvatarUrl ||
-        nextState.socialCoverUrl
-    )
-    if (hasRestoredPreviewOrAssets || nextTrimmed === current.url.trim()) {
-      lastFetchedUrlRef.current = nextTrimmed
-    } else {
-      lastFetchedUrlRef.current = ""
-    }
-    setHistory((prev) => ({
-      past: [...prev.past, current].slice(-50),
-      future: prev.future.slice(1),
-    }))
-    setState(nextState)
-    setPreviewGeneration((g) => g + 1)
-  }, [history.future])
+    applyHistorySnapshot(nextState, (current) => {
+      setHistory((prev) => ({
+        past: enforceHistoryLimits([...prev.past, current]),
+        future: prev.future.slice(1),
+      }))
+    })
+  }, [history.future, applyHistorySnapshot])
 
   const fetchPreview = React.useCallback(
     async (urlOverride?: string) => {
@@ -276,6 +513,7 @@ export function StudioWorkspace() {
       const controller = new AbortController()
       fetchAbortRef.current = controller
       const startAssetTokens = { ...assetMutationTokenRef.current }
+      const paletteSession = ++brandPaletteSessionRef.current
 
       setIsFetching(true)
       try {
@@ -306,10 +544,12 @@ export function StudioWorkspace() {
               startAssetTokens.screenshot || Boolean(prev.customScreenshotUrl)
           const preserveAvatar =
             assetMutationTokenRef.current.avatar !== startAssetTokens.avatar ||
-            Boolean(prev.socialAvatarUrl)
+            (userOverrodeSocialAssetsRef.current.avatar &&
+              Boolean(prev.socialAvatarUrl))
           const preserveCover =
             assetMutationTokenRef.current.cover !== startAssetTokens.cover ||
-            Boolean(prev.socialCoverUrl)
+            (userOverrodeSocialAssetsRef.current.cover &&
+              Boolean(prev.socialCoverUrl))
           return {
             ...prev,
             metadata: data,
@@ -332,14 +572,47 @@ export function StudioWorkspace() {
         })
         setPreviewGeneration((g) => g + 1)
         notify(`Loaded preview for ${data.displayUrl}`, {
-          actionLabel: "Match Brand Colors",
+          actionLabel: "Complement Colors",
           onAction: () => {
+            const getContextSnapshot = (s: StudioState) =>
+              [
+                s.mode,
+                s.url.trim(),
+                s.customFaviconUrl,
+                s.customScreenshotUrl,
+                s.socialAvatarUrl,
+                s.socialCoverUrl,
+                s.backgroundType,
+                s.colorFillMode,
+                s.gradientId,
+                s.gradientFrom,
+                s.gradientVia,
+                s.gradientTo,
+                s.solidColor,
+                s.tabAccentColor,
+              ].join("|")
+
+            if (
+              brandPaletteSessionRef.current !== paletteSession ||
+              stateRef.current.url.trim() !== target
+            ) {
+              return
+            }
+            const startSession = brandPaletteSessionRef.current
+            const startSnapshotKey = getContextSnapshot(stateRef.current)
             void extractBrandPaletteFromState({
               ...stateRef.current,
               metadata: data,
             }).then((palette) => {
+              if (
+                brandPaletteSessionRef.current !== startSession ||
+                stateRef.current.url.trim() !== target ||
+                getContextSnapshot(stateRef.current) !== startSnapshotKey
+              ) {
+                return
+              }
               if (!palette) {
-                notify("Could not extract brand palette from this link")
+                notify("Could not extract complementary palette from this link")
                 return
               }
               updateState(
@@ -355,7 +628,7 @@ export function StudioWorkspace() {
                 },
                 { forceHistoryStep: true }
               )
-              notify(`Matched brand palette (${palette.gradientFrom})`)
+              notify(`Applied dim complementary backdrop (${palette.gradientVia})`)
             })
           },
         })
@@ -451,16 +724,52 @@ export function StudioWorkspace() {
   }, [recordUndoSnapshot])
 
   const handleReset = React.useCallback(() => {
-    recordUndoSnapshot(stateRef.current, true)
+    const current = stateRef.current
+    const preservedUrl = current.url.trim() || DEFAULT_STUDIO_STATE.url
+    const preservedMetadata = current.metadata
+    const detected = detectSocialPlatform(preservedUrl)
+    const platformId =
+      preservedMetadata?.detectedPlatform ??
+      (detected.platform !== "custom"
+        ? detected.platform
+        : DEFAULT_STUDIO_STATE.socialPlatform)
+    const platformConfig =
+      SOCIAL_PLATFORMS[platformId] ?? SOCIAL_PLATFORMS.custom
+
+    recordUndoSnapshot(current, true)
     uploadResetTokenRef.current += 1
-    fetchAbortRef.current?.abort()
-    lastFetchedUrlRef.current = ""
-    currentUrlRef.current = DEFAULT_STUDIO_STATE.url
-    setIsFetching(false)
+    brandPaletteSessionRef.current += 1
+    userOverrodeSocialAssetsRef.current = { avatar: false, cover: false }
+    currentUrlRef.current = preservedUrl
     setPreviewGeneration((g) => g + 1)
-    setState(DEFAULT_STUDIO_STATE)
-    void fetchPreview(DEFAULT_STUDIO_STATE.url)
-    notify("Reset studio to default showcase")
+    setState({
+      ...DEFAULT_STUDIO_STATE,
+      url: preservedUrl,
+      metadata: preservedMetadata,
+      socialPlatform: platformId,
+      socialDisplayName:
+        preservedMetadata?.title ||
+        (detected.platform !== "custom"
+          ? detected.displayName
+          : DEFAULT_STUDIO_STATE.socialDisplayName),
+      socialHandle:
+        preservedMetadata?.handle ||
+        (detected.platform !== "custom"
+          ? detected.handle
+          : DEFAULT_STUDIO_STATE.socialHandle),
+      socialBio:
+        preservedMetadata?.description ?? DEFAULT_STUDIO_STATE.socialBio,
+      socialMetrics:
+        preservedMetadata?.metrics ?? DEFAULT_STUDIO_STATE.socialMetrics,
+      socialCtaLabel: platformConfig.defaultCta,
+      socialAvatarUrl: preservedMetadata?.avatarUrl ?? "",
+      socialCoverUrl: preservedMetadata?.coverUrl ?? "",
+    })
+    if (!preservedMetadata) {
+      lastFetchedUrlRef.current = ""
+      void fetchPreview(preservedUrl)
+    }
+    notify("Reset studio settings")
   }, [fetchPreview, notify, recordUndoSnapshot])
 
   const handleToggleTheme = React.useCallback(() => {
@@ -471,66 +780,108 @@ export function StudioWorkspace() {
     (patch: Partial<StudioState>) => {
       recordUndoSnapshot(stateRef.current, true)
       uploadResetTokenRef.current += 1
-      fetchAbortRef.current?.abort()
-      setIsFetching(false)
+      brandPaletteSessionRef.current += 1
+      userOverrodeSocialAssetsRef.current = {
+        avatar: false,
+        cover: Boolean(patch.socialCoverUrl),
+      }
       setPreviewGeneration((g) => g + 1)
-      if (patch.url !== undefined) {
-        currentUrlRef.current = patch.url
-      }
-      setState((prev) => ({
-        ...prev,
-        bgPattern: DEFAULT_STUDIO_STATE.bgPattern,
-        bgPatternOpacity: DEFAULT_STUDIO_STATE.bgPatternOpacity,
-        borderStyle: DEFAULT_STUDIO_STATE.borderStyle,
-        frameScale: DEFAULT_STUDIO_STATE.frameScale,
-        frameOffsetX: DEFAULT_STUDIO_STATE.frameOffsetX,
-        frameOffsetY: DEFAULT_STUDIO_STATE.frameOffsetY,
-        frameShadow: DEFAULT_STUDIO_STATE.frameShadow,
-        showNavButtons: DEFAULT_STUDIO_STATE.showNavButtons,
-        webShowQr: DEFAULT_STUDIO_STATE.webShowQr,
-        showCapturedFrom: DEFAULT_STUDIO_STATE.showCapturedFrom,
-        tabTitle: DEFAULT_STUDIO_STATE.tabTitle,
-        tabAccentColor: DEFAULT_STUDIO_STATE.tabAccentColor,
-        customFaviconUrl: DEFAULT_STUDIO_STATE.customFaviconUrl,
-        showCornerIcon: DEFAULT_STUDIO_STATE.showCornerIcon,
-        cornerIconPosition: DEFAULT_STUDIO_STATE.cornerIconPosition,
-        showPosterHeader: DEFAULT_STUDIO_STATE.showPosterHeader,
-        posterHeadline: DEFAULT_STUDIO_STATE.posterHeadline,
-        posterAccentText: DEFAULT_STUDIO_STATE.posterAccentText,
-        posterHeadlineAlign: DEFAULT_STUDIO_STATE.posterHeadlineAlign,
-        posterHeadlineSize: DEFAULT_STUDIO_STATE.posterHeadlineSize,
-        showPosterFooter: DEFAULT_STUDIO_STATE.showPosterFooter,
-        posterFooterTitle: DEFAULT_STUDIO_STATE.posterFooterTitle,
-        posterFooterSubtitle: DEFAULT_STUDIO_STATE.posterFooterSubtitle,
-        fontStyle: DEFAULT_STUDIO_STATE.fontStyle,
-        showCalloutBadge: DEFAULT_STUDIO_STATE.showCalloutBadge,
-        calloutText: DEFAULT_STUDIO_STATE.calloutText,
-        calloutPosition: DEFAULT_STUDIO_STATE.calloutPosition,
-        ...patch,
-        metadata: null,
-        customScreenshotUrl: "",
-        socialAvatarUrl: "",
-        socialCoverUrl: patch.socialCoverUrl ?? "",
-      }))
-      if (patch.url) {
-        void fetchPreview(patch.url)
-      }
+      setState((prev) => {
+        const preservedUrl = prev.url.trim() || patch.url || DEFAULT_STUDIO_STATE.url
+        const preservedMetadata = prev.metadata
+        currentUrlRef.current = preservedUrl
+        return {
+          ...prev,
+          bgPattern: DEFAULT_STUDIO_STATE.bgPattern,
+          bgPatternOpacity: DEFAULT_STUDIO_STATE.bgPatternOpacity,
+          bgBlur: DEFAULT_STUDIO_STATE.bgBlur,
+          bgDim: DEFAULT_STUDIO_STATE.bgDim,
+          noiseOverlay: DEFAULT_STUDIO_STATE.noiseOverlay,
+          backgroundImageUrl: DEFAULT_STUDIO_STATE.backgroundImageUrl,
+          unsplashPhotoId: DEFAULT_STUDIO_STATE.unsplashPhotoId,
+          unsplashPhotographer: DEFAULT_STUDIO_STATE.unsplashPhotographer,
+          borderStyle: DEFAULT_STUDIO_STATE.borderStyle,
+          frameScale: DEFAULT_STUDIO_STATE.frameScale,
+          frameOffsetX: DEFAULT_STUDIO_STATE.frameOffsetX,
+          frameOffsetY: DEFAULT_STUDIO_STATE.frameOffsetY,
+          frameShadow: DEFAULT_STUDIO_STATE.frameShadow,
+          frameTilt: DEFAULT_STUDIO_STATE.frameTilt,
+          showSpotlight: DEFAULT_STUDIO_STATE.showSpotlight,
+          spotlightX: DEFAULT_STUDIO_STATE.spotlightX,
+          spotlightY: DEFAULT_STUDIO_STATE.spotlightY,
+          spotlightRadius: DEFAULT_STUDIO_STATE.spotlightRadius,
+          spotlightDim: DEFAULT_STUDIO_STATE.spotlightDim,
+          showNavButtons: DEFAULT_STUDIO_STATE.showNavButtons,
+          webShowQr: DEFAULT_STUDIO_STATE.webShowQr,
+          showCapturedFrom: DEFAULT_STUDIO_STATE.showCapturedFrom,
+          tabTitle: DEFAULT_STUDIO_STATE.tabTitle,
+          tabAccentColor: DEFAULT_STUDIO_STATE.tabAccentColor,
+          customFaviconUrl: DEFAULT_STUDIO_STATE.customFaviconUrl,
+          showCornerIcon: DEFAULT_STUDIO_STATE.showCornerIcon,
+          cornerIconPosition: DEFAULT_STUDIO_STATE.cornerIconPosition,
+          showPosterHeader: DEFAULT_STUDIO_STATE.showPosterHeader,
+          posterHeadline: DEFAULT_STUDIO_STATE.posterHeadline,
+          posterAccentText: DEFAULT_STUDIO_STATE.posterAccentText,
+          posterHeadlineAlign: DEFAULT_STUDIO_STATE.posterHeadlineAlign,
+          posterHeadlineSize: DEFAULT_STUDIO_STATE.posterHeadlineSize,
+          showPosterFooter: DEFAULT_STUDIO_STATE.showPosterFooter,
+          posterFooterTitle: DEFAULT_STUDIO_STATE.posterFooterTitle,
+          posterFooterSubtitle: DEFAULT_STUDIO_STATE.posterFooterSubtitle,
+          fontStyle: DEFAULT_STUDIO_STATE.fontStyle,
+          showCalloutBadge: DEFAULT_STUDIO_STATE.showCalloutBadge,
+          calloutText: DEFAULT_STUDIO_STATE.calloutText,
+          calloutPosition: DEFAULT_STUDIO_STATE.calloutPosition,
+          ...patch,
+          url: preservedUrl,
+          metadata: preservedMetadata,
+          ...(preservedMetadata
+            ? {
+                socialDisplayName:
+                  preservedMetadata.title ||
+                  patch.socialDisplayName ||
+                  prev.socialDisplayName,
+                socialHandle:
+                  preservedMetadata.handle ||
+                  patch.socialHandle ||
+                  prev.socialHandle,
+                socialBio:
+                  preservedMetadata.description ||
+                  patch.socialBio ||
+                  prev.socialBio,
+                socialMetrics:
+                  preservedMetadata.metrics ||
+                  patch.socialMetrics ||
+                  prev.socialMetrics,
+                socialAvatarUrl: preservedMetadata.avatarUrl ?? "",
+                socialCoverUrl:
+                  patch.socialCoverUrl ?? preservedMetadata.coverUrl ?? "",
+              }
+            : {
+                socialAvatarUrl: "",
+                socialCoverUrl: patch.socialCoverUrl ?? "",
+              }),
+        }
+      })
     },
-    [fetchPreview, recordUndoSnapshot]
+    [recordUndoSnapshot]
   )
 
   const handleApplyCustomPreset = React.useCallback(
     (preset: CustomPreset) => {
-      updateState(preset.patch, { forceHistoryStep: true })
+      brandPaletteSessionRef.current += 1
+      updateState(
+        { ...preset.patch, mode: preset.mode },
+        { forceHistoryStep: true }
+      )
       notify(`Applied "${preset.name}" preset`)
     },
     [updateState, notify]
   )
 
   const handleSaveCustomPreset = React.useCallback(
-    (rawName: string) => {
+    (rawName: string): boolean => {
       const trimmed = rawName.trim().slice(0, 32)
-      if (!trimmed) return
+      if (!trimmed) return false
       const current = stateRef.current
       const newPreset: CustomPreset = {
         id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -540,29 +891,31 @@ export function StudioWorkspace() {
         createdAt: Date.now(),
         patch: extractStylePresetPatch(current),
       }
-      setCustomPresets((prev) => {
-        const next = [...prev, newPreset]
-        saveCustomPresets(next)
-        return next
-      })
+      const { ok, presets } = appendCustomPreset(newPreset, customPresets)
+      if (!ok) {
+        notify("Could not save preset: browser storage is full or unavailable")
+        return false
+      }
+      setCustomPresets(presets)
       notify(`Saved "${trimmed}" to your presets`)
+      return true
     },
-    [notify]
+    [customPresets, notify]
   )
 
   const handleDeleteCustomPreset = React.useCallback(
     (id: string) => {
-      setCustomPresets((prev) => {
-        const target = prev.find((p) => p.id === id)
-        const next = prev.filter((p) => p.id !== id)
-        saveCustomPresets(next)
-        if (target) {
-          notify(`Deleted "${target.name}" preset`)
-        }
-        return next
-      })
+      const { ok, presets, removed } = removeCustomPreset(id, customPresets)
+      if (!ok) {
+        notify("Could not update presets in browser storage")
+        return
+      }
+      setCustomPresets(presets)
+      if (removed) {
+        notify(`Deleted "${removed.name}" preset`)
+      }
     },
-    [notify]
+    [customPresets, notify]
   )
 
   // Sync compact viewport breakpoint for the slide-over controls sidebar
@@ -639,17 +992,6 @@ export function StudioWorkspace() {
 
   // Keyboard shortcuts (Export, Quick Copy, Undo / Redo)
   React.useEffect(() => {
-    const isEditableElement = (el: EventTarget | null) => {
-      if (!(el instanceof HTMLElement)) return false
-      const tag = el.tagName.toLowerCase()
-      return (
-        tag === "input" ||
-        tag === "textarea" ||
-        tag === "select" ||
-        el.isContentEditable
-      )
-    }
-
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
         e.preventDefault()
@@ -663,7 +1005,7 @@ export function StudioWorkspace() {
         void handleQuickCopy()
       } else if (
         (e.metaKey || e.ctrlKey) &&
-        !isEditableElement(e.target) &&
+        !isEditableTarget(e.target) &&
         e.key.toLowerCase() === "z"
       ) {
         e.preventDefault()
@@ -674,7 +1016,7 @@ export function StudioWorkspace() {
         }
       } else if (
         (e.metaKey || e.ctrlKey) &&
-        !isEditableElement(e.target) &&
+        !isEditableTarget(e.target) &&
         e.key.toLowerCase() === "y"
       ) {
         e.preventDefault()
@@ -688,6 +1030,7 @@ export function StudioWorkspace() {
   // Global clipboard image paste (Cmd/Ctrl+V) with mode-aware routing & target switch action
   React.useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented || isEditableTarget(e.target)) return
       const items = e.clipboardData?.items
       if (!items) return
       let imageFile: File | null = null
@@ -701,13 +1044,19 @@ export function StudioWorkspace() {
       if (!imageFile) return
 
       e.preventDefault()
+      const pasteToken = ++pasteTokenRef.current
       const resetToken = uploadResetTokenRef.current
+      const startUrlRevision = urlRevisionRef.current
+      const startUrl = stateRef.current.url.trim()
+      const isCurrentPaste = () =>
+        pasteTokenRef.current === pasteToken &&
+        uploadResetTokenRef.current === resetToken &&
+        urlRevisionRef.current === startUrlRevision &&
+        stateRef.current.url.trim() === startUrl
+
       const reader = new FileReader()
       reader.onload = () => {
-        if (
-          uploadResetTokenRef.current !== resetToken ||
-          typeof reader.result !== "string"
-        ) {
+        if (!isCurrentPaste() || typeof reader.result !== "string") {
           return
         }
         const dataUrl = reader.result
@@ -777,6 +1126,7 @@ export function StudioWorkspace() {
           }
         } else {
           const prevCover = current.socialCoverUrl
+          const prevCoverWasOverride = userOverrodeSocialAssetsRef.current.cover
           updateState({ socialCoverUrl: dataUrl }, { forceHistoryStep: true })
           notify("Pasted image as social cover", {
             actionLabel: "Use as Avatar",
@@ -795,10 +1145,16 @@ export function StudioWorkspace() {
                 },
                 { forceHistoryStep: true }
               )
+              userOverrodeSocialAssetsRef.current.cover =
+                prevCoverWasOverride && Boolean(prevCover)
               notify("Applied pasted image as social avatar")
             },
           })
         }
+      }
+      reader.onerror = () => {
+        if (!isCurrentPaste()) return
+        notify("Could not read pasted clipboard image")
       }
       reader.readAsDataURL(imageFile)
     }
@@ -838,6 +1194,7 @@ export function StudioWorkspace() {
             }}
             onQuickCopy={handleQuickCopy}
             getUploadResetToken={getUploadResetToken}
+            onNotify={(msg) => notify(msg)}
             onCloseMobile={() => closeMobileMenu(true)}
             closeButtonRef={drawerCloseBtnRef}
           />
@@ -867,6 +1224,8 @@ export function StudioWorkspace() {
           onApplyCustomPreset={handleApplyCustomPreset}
           onSaveCustomPreset={handleSaveCustomPreset}
           onDeleteCustomPreset={handleDeleteCustomPreset}
+          getUploadResetToken={getUploadResetToken}
+          onChange={updateState}
           onDropImage={(dataUrl) =>
             updateState(
               {

@@ -1,10 +1,143 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { ImageResponse } from "next/og"
 import { NextRequest } from "next/server"
-import { parseSocialStats } from "@/components/studio/social-mockup-card"
-import { resolveTabAccentColor } from "@/components/studio/web-mockup-card"
+import { parseSocialStats, resolveTabAccentColor } from "@/lib/presets"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
-import { DEFAULT_STUDIO_STATE, type StudioState } from "@/lib/studio-types"
+import {
+  DEFAULT_STUDIO_STATE,
+  type FontStyleId,
+  type StudioState,
+} from "@/lib/studio-types"
 import { decodeShareState, formatDisplayUrl } from "@/lib/url-utils"
+
+interface OgFontDescriptor {
+  name: string
+  data: ArrayBuffer
+  weight: 400 | 600 | 700
+  style: "normal"
+}
+
+const fontBufferCache = new Map<string, Promise<ArrayBuffer | null>>()
+
+function readFirstAvailableFont(paths: string[]): Promise<ArrayBuffer | null> {
+  const cacheKey = paths.join("|")
+  const existing = fontBufferCache.get(cacheKey)
+  if (existing) return existing
+
+  const promise = (async () => {
+    for (const filePath of paths) {
+      try {
+        const buf = await readFile(filePath)
+        return buf.buffer.slice(
+          buf.byteOffset,
+          buf.byteOffset + buf.byteLength
+        ) as ArrayBuffer
+      } catch {
+        // Try next candidate path
+      }
+    }
+    return null
+  })()
+
+  fontBufferCache.set(cacheKey, promise)
+  return promise
+}
+
+async function resolveOgFontConfig(fontStyle: FontStyleId): Promise<{
+  fontFamily: string
+  fonts: OgFontDescriptor[]
+}> {
+  const bundledGeistPath = join(
+    process.cwd(),
+    "node_modules/next/dist/compiled/@vercel/og/Geist-Regular.ttf"
+  )
+
+  if (fontStyle === "mono") {
+    const [regularData, boldData] = await Promise.all([
+      readFirstAvailableFont([
+        "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
+        bundledGeistPath,
+      ]),
+      readFirstAvailableFont([
+        "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Bold.ttf",
+        "/usr/share/fonts/google-noto/NotoSansMono-Bold.ttf",
+        bundledGeistPath,
+      ]),
+    ])
+    const fallbackData = regularData ?? boldData
+    if (fallbackData) {
+      return {
+        fontFamily: "PrettyLinkMono",
+        fonts: [
+          {
+            name: "PrettyLinkMono",
+            data: regularData ?? fallbackData,
+            weight: 400,
+            style: "normal",
+          },
+          {
+            name: "PrettyLinkMono",
+            data: boldData ?? fallbackData,
+            weight: 600,
+            style: "normal",
+          },
+          {
+            name: "PrettyLinkMono",
+            data: boldData ?? fallbackData,
+            weight: 700,
+            style: "normal",
+          },
+        ],
+      }
+    }
+  }
+
+  if (fontStyle === "editorial") {
+    const [regularData, boldData] = await Promise.all([
+      readFirstAvailableFont([
+        "/usr/share/fonts/google-crosextra-caladea-fonts/Caladea-Regular.ttf",
+        bundledGeistPath,
+      ]),
+      readFirstAvailableFont([
+        "/usr/share/fonts/google-crosextra-caladea-fonts/Caladea-Bold.ttf",
+        bundledGeistPath,
+      ]),
+    ])
+    const fallbackData = regularData ?? boldData
+    if (fallbackData) {
+      return {
+        fontFamily: "PrettyLinkEditorial",
+        fonts: [
+          {
+            name: "PrettyLinkEditorial",
+            data: regularData ?? fallbackData,
+            weight: 400,
+            style: "normal",
+          },
+          {
+            name: "PrettyLinkEditorial",
+            data: boldData ?? fallbackData,
+            weight: 600,
+            style: "normal",
+          },
+          {
+            name: "PrettyLinkEditorial",
+            data: boldData ?? fallbackData,
+            weight: 700,
+            style: "normal",
+          },
+        ],
+      }
+    }
+  }
+
+  return {
+    fontFamily: "sans-serif",
+    fonts: [],
+  }
+}
 
 export async function GET(req: NextRequest) {
   const rawD = req.nextUrl.searchParams.get("d") ?? ""
@@ -26,12 +159,9 @@ export async function GET(req: NextRequest) {
           ? `linear-gradient(${state.gradientAngle}deg, ${state.gradientFrom} 0%, ${state.gradientVia} 50%, ${state.gradientTo} 100%)`
           : `linear-gradient(${state.gradientAngle}deg, ${state.gradientFrom} 0%, ${state.gradientTo} 100%)`
 
-  const fontFamily =
-    state.fontStyle === "mono"
-      ? "monospace"
-      : state.fontStyle === "editorial"
-        ? "Georgia, serif"
-        : "sans-serif"
+  const { fontFamily, fonts } = await resolveOgFontConfig(
+    state.fontStyle ?? "instrument"
+  )
 
   const hasCallout =
     Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
@@ -44,6 +174,9 @@ export async function GET(req: NextRequest) {
   const platform =
     SOCIAL_PLATFORMS[state.socialPlatform] ?? SOCIAL_PLATFORMS.custom
   const stats = parseSocialStats(state.socialMetrics)
+  const socialHandleRowText = `${state.socialHandle || "@Oliviar_"} · ${platform.shortLabel}`
+  const addressUrlText = `https://${displayUrl}`
+  const webSublineText = `Interactive link showcase · ${displayUrl}`
 
   return new ImageResponse(
     (
@@ -62,6 +195,18 @@ export async function GET(req: NextRequest) {
           position: "relative",
         }}
       >
+        {state.backgroundType !== "none" && state.bgDim > 0 ? (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              backgroundColor: `rgba(0, 0, 0, ${Math.min(0.85, state.bgDim / 100)})`,
+            }}
+          />
+        ) : null}
         {/* Top Row: PrettyLink Badge + Optional Callout Pill */}
         <div
           style={{
@@ -69,56 +214,139 @@ export async function GET(req: NextRequest) {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            position: "relative",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              background: "rgba(9, 9, 11, 0.55)",
-              border: "1px solid rgba(255, 255, 255, 0.18)",
-              borderRadius: "999px",
-              padding: "8px 16px",
-              fontSize: "18px",
-              fontWeight: 700,
-            }}
-          >
-            <div
-              style={{
-                width: "12px",
-                height: "12px",
-                borderRadius: "999px",
-                background: accentColor,
-              }}
-            />
-            <span>PrettyLink</span>
-          </div>
-
-          {hasCallout && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                background: "rgba(9, 9, 11, 0.85)",
-                border: "1px solid rgba(255, 255, 255, 0.22)",
-                borderRadius: "999px",
-                padding: "8px 18px",
-                fontSize: "18px",
-                fontWeight: 600,
-              }}
-            >
+          {hasCallout && state.calloutPosition === "top-left" ? (
+            <>
               <div
                 style={{
-                  width: "10px",
-                  height: "10px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  background: "rgba(9, 9, 11, 0.85)",
+                  border: "1px solid rgba(255, 255, 255, 0.22)",
                   borderRadius: "999px",
-                  background: accentColor,
+                  padding: "8px 18px",
+                  fontSize: "18px",
+                  fontWeight: 600,
                 }}
-              />
-              <span>{state.calloutText.trim()}</span>
-            </div>
+              >
+                <div
+                  style={{
+                    width: "10px",
+                    height: "10px",
+                    borderRadius: "999px",
+                    background: accentColor,
+                  }}
+                />
+                <span>{state.calloutText.trim()}</span>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  background: "rgba(9, 9, 11, 0.55)",
+                  border: "1px solid rgba(255, 255, 255, 0.18)",
+                  borderRadius: "999px",
+                  padding: "8px 16px",
+                  fontSize: "18px",
+                  fontWeight: 700,
+                }}
+              >
+                <div
+                  style={{
+                    width: "12px",
+                    height: "12px",
+                    borderRadius: "999px",
+                    background: accentColor,
+                  }}
+                />
+                <span>PrettyLink</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  background: "rgba(9, 9, 11, 0.55)",
+                  border: "1px solid rgba(255, 255, 255, 0.18)",
+                  borderRadius: "999px",
+                  padding: "8px 16px",
+                  fontSize: "18px",
+                  fontWeight: 700,
+                }}
+              >
+                <div
+                  style={{
+                    width: "12px",
+                    height: "12px",
+                    borderRadius: "999px",
+                    background: accentColor,
+                  }}
+                />
+                <span>PrettyLink</span>
+              </div>
+
+              {hasCallout && state.calloutPosition === "top-center" && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    background: "rgba(9, 9, 11, 0.85)",
+                    border: "1px solid rgba(255, 255, 255, 0.22)",
+                    borderRadius: "999px",
+                    padding: "8px 18px",
+                    fontSize: "18px",
+                    fontWeight: 600,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "10px",
+                      height: "10px",
+                      borderRadius: "999px",
+                      background: accentColor,
+                    }}
+                  />
+                  <span>{state.calloutText.trim()}</span>
+                </div>
+              )}
+
+              {hasCallout && state.calloutPosition === "top-center" ? (
+                <div style={{ width: "130px", display: "flex" }} />
+              ) : hasCallout ? (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    background: "rgba(9, 9, 11, 0.85)",
+                    border: "1px solid rgba(255, 255, 255, 0.22)",
+                    borderRadius: "999px",
+                    padding: "8px 18px",
+                    fontSize: "18px",
+                    fontWeight: 600,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "10px",
+                      height: "10px",
+                      borderRadius: "999px",
+                      background: accentColor,
+                    }}
+                  />
+                  <span>{state.calloutText.trim()}</span>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
 
@@ -147,7 +375,76 @@ export async function GET(req: NextRequest) {
         ) : null}
 
         {/* Center Mockup Card */}
-        {state.mode === "social" ? (
+        {state.mode === "code" ? (
+          <div
+            style={{
+              width: "820px",
+              display: "flex",
+              flexDirection: "column",
+              background:
+                state.codeTheme === "light" ? "#FFFFFF" : "#0D0D11",
+              color: state.codeTheme === "light" ? "#09090B" : "#FAFAFA",
+              borderRadius: "28px",
+              padding: "32px 36px",
+              boxShadow: "0 28px 64px rgba(0, 0, 0, 0.38)",
+              border: "1px solid rgba(255, 255, 255, 0.16)",
+              gap: "16px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                }}
+              >
+                <span
+                  style={{
+                    background: accentColor,
+                    color: "#FFFFFF",
+                    borderRadius: "999px",
+                    padding: "6px 16px",
+                    fontSize: "16px",
+                    fontWeight: 700,
+                  }}
+                >
+                  {state.codeCardStyle === "changelog"
+                    ? state.changelogVersion || "v2.4.0"
+                    : state.codeFilename || "prettylink.config.ts"}
+                </span>
+                <span style={{ fontSize: "16px", opacity: 0.65 }}>
+                  {state.codeCardStyle === "changelog"
+                    ? state.changelogDate || "Just Shipped"
+                    : state.codeLanguage.toUpperCase()}
+                </span>
+              </div>
+              <span style={{ fontSize: "16px", opacity: 0.55 }}>
+                {displayUrl}
+              </span>
+            </div>
+            <div
+              style={{
+                fontSize: "28px",
+                fontWeight: 700,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              {state.codeCardStyle === "changelog"
+                ? state.changelogTitle ||
+                  "Interactive Stage & Duo Device Showcases"
+                : (state.codeContent || "").split("\n")[0] ||
+                  "PrettyLink Code Showcase"}
+            </div>
+          </div>
+        ) : state.mode === "social" ? (
           <div
             style={{
               width: "760px",
@@ -214,11 +511,12 @@ export async function GET(req: NextRequest) {
                   </div>
                   <div
                     style={{
+                      display: "flex",
                       fontSize: "19px",
                       opacity: 0.65,
                     }}
                   >
-                    {state.socialHandle || "@Oliviar_"} · {platform.shortLabel}
+                    {socialHandleRowText}
                   </div>
                 </div>
               </div>
@@ -388,7 +686,7 @@ export async function GET(req: NextRequest) {
                     background: accentColor,
                   }}
                 />
-                <span>https://{displayUrl}</span>
+                <span>{addressUrlText}</span>
               </div>
 
               <div
@@ -410,11 +708,12 @@ export async function GET(req: NextRequest) {
                 </div>
                 <div
                   style={{
+                    display: "flex",
                     fontSize: "18px",
                     opacity: 0.65,
                   }}
                 >
-                  Interactive link showcase · {displayUrl}
+                  {webSublineText}
                 </div>
               </div>
             </div>
@@ -442,6 +741,7 @@ export async function GET(req: NextRequest) {
     {
       width: 1200,
       height: 630,
+      ...(fonts.length > 0 ? { fonts } : {}),
     }
   )
 }

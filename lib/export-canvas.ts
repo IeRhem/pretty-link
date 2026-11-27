@@ -1,3 +1,9 @@
+import {
+  CODE_LANGUAGES,
+  getTokenColor,
+  parseChangelogItems,
+  tokenizeCodeLine,
+} from "@/components/studio/code-mockup-card"
 import { parseSocialStats } from "@/components/studio/social-mockup-card"
 import {
   hexToTintRgba,
@@ -5,7 +11,11 @@ import {
   resolveTabUrlForeground,
 } from "@/components/studio/web-mockup-card"
 import { embedUrlMetadataInImageBlob } from "@/lib/image-metadata"
-import { ASPECT_RATIOS, resolveAspectDimensions } from "@/lib/presets"
+import {
+  ASPECT_RATIOS,
+  getFrameTiltMatrix,
+  resolveAspectDimensions,
+} from "@/lib/presets"
 import { generateQrMatrix } from "@/lib/qr"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
 import type {
@@ -539,6 +549,11 @@ async function drawBackground(
       ctx.fillRect(0, 0, width, height)
     }
 
+    if (state.bgDim > 0) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(0.85, state.bgDim / 100)})`
+      ctx.fillRect(0, 0, width, height)
+    }
+
     if (state.noiseOverlay) {
       drawNoiseOverlay(ctx, width, height)
     }
@@ -744,7 +759,7 @@ function drawPosterOverlays(
     const sharesCornerWithIcon =
       state.showCornerIcon &&
       state.cornerIconPosition === state.calloutPosition
-    const pillY = sharesCornerWithIcon
+    let pillY = sharesCornerWithIcon
       ? Math.round(height * 0.055 + cornerSize + Math.round(8 * scaleFactor))
       : Math.round(height * 0.055)
     let pillX = Math.round(width * 0.075)
@@ -752,6 +767,52 @@ function drawPosterOverlays(
       pillX = Math.round((width - pillW) / 2)
     } else if (state.calloutPosition === "top-right") {
       pillX = Math.round(width * (1 - 0.075) - pillW)
+    }
+
+    const hasHeadlineText =
+      state.showPosterHeader &&
+      Boolean(state.posterHeadline.trim() || state.posterAccentText.trim())
+    const headlineTopY = Math.round(height * 0.17)
+    const minHeadlineGap = Math.round(6 * scaleFactor)
+    const intersectsLeftHeadline =
+      hasHeadlineText &&
+      (state.posterHeadlineAlign === "left"
+        ? state.calloutPosition === "top-left" ||
+          pillX < Math.round(width * 0.92)
+        : state.posterHeadlineAlign === "right"
+          ? state.calloutPosition === "top-right" ||
+            pillX + pillW > Math.round(width * 0.08)
+          : true)
+    if (
+      intersectsLeftHeadline &&
+      pillY + pillH + minHeadlineGap > headlineTopY
+    ) {
+      pillY = Math.max(
+        Math.round(4 * scaleFactor),
+        headlineTopY - pillH - minHeadlineGap
+      )
+      if (
+        sharesCornerWithIcon &&
+        pillY < Math.round(height * 0.055) + cornerSize
+      ) {
+        if (state.calloutPosition === "top-left") {
+          pillX = Math.round(
+            width * 0.075 + cornerSize + Math.round(10 * scaleFactor)
+          )
+        } else if (state.calloutPosition === "top-center") {
+          pillX = Math.min(
+            Math.round(width * (1 - 0.04) - pillW),
+            Math.round(width / 2 + cornerSize / 2 + Math.round(10 * scaleFactor))
+          )
+        } else if (state.calloutPosition === "top-right") {
+          pillX = Math.round(
+            width * (1 - 0.075) -
+              cornerSize -
+              Math.round(10 * scaleFactor) -
+              pillW
+          )
+        }
+      }
     }
 
     ctx.save()
@@ -1620,6 +1681,13 @@ async function drawWebMode(
     fy = Math.round(height * (1 + offY) - fh + 8)
     const r = Math.round(18 * scaleFactor)
     radii = [r, r, 0, 0]
+  } else if (state.webLayout === "duo") {
+    fw = Math.round(width * 0.78 * userScale)
+    fh = Math.round(height * 0.68 * userScale)
+    fx = Math.round(width * (0.45 + offX) - fw / 2)
+    fy = Math.round(height * (0.47 + offY) - fh / 2)
+    const r = Math.round(16 * scaleFactor)
+    radii = [r, r, r, r]
   } else {
     // floating
     fw = Math.round(width * 0.8 * userScale * 0.92)
@@ -1942,9 +2010,12 @@ async function drawWebMode(
 
   // Viewport content
   const viewH = fy + fh - contentTop
+  const themedScreenshotUrl = state.metadata?.screenshotUrl
+    ? `${state.metadata.screenshotUrl}${state.metadata.screenshotUrl.includes("?") ? "&" : "?"}theme=${isDarkChrome ? "dark" : "light"}`
+    : null
   const screenshotSrc =
     state.customScreenshotUrl ||
-    state.metadata?.screenshotUrl ||
+    themedScreenshotUrl ||
     state.metadata?.ogImageUrl ||
     null
 
@@ -2041,6 +2112,132 @@ async function drawWebMode(
   }
 
   ctx.restore()
+
+  if (state.webLayout === "duo") {
+    const mw = Math.round(width * 0.265 * userScale)
+    const mh = Math.round(height * 0.64 * userScale)
+    const mx = Math.round(width * (0.73 + offX) - mw / 2)
+    const my = Math.round(height * (0.59 + offY) - mh / 2)
+    const mr = Math.round(22 * scaleFactor)
+    const mRadii: [number, number, number, number] = [mr, mr, mr, mr]
+
+    if (state.frameShadow > 0) {
+      ctx.save()
+      ctx.shadowColor = `rgba(9, 9, 14, ${Math.min(0.75, 0.28 + (state.frameShadow / 100) * 0.45)})`
+      ctx.shadowBlur = Math.round(52 * scaleFactor * (state.frameShadow / 100))
+      ctx.shadowOffsetY = Math.round(22 * scaleFactor * (state.frameShadow / 100))
+      roundedRectPath(ctx, mx, my, mw, mh, mRadii)
+      ctx.fillStyle = "#111114"
+      ctx.fill()
+      ctx.restore()
+    }
+
+    ctx.save()
+    roundedRectPath(ctx, mx, my, mw, mh, mRadii)
+    ctx.clip()
+
+    ctx.fillStyle = isDarkChrome ? "#09090B" : "#FFFFFF"
+    ctx.fillRect(mx, my, mw, mh)
+
+    const mHeaderH = Math.round(32 * scaleFactor)
+    ctx.fillStyle = isDarkChrome ? "#121216" : "#FAFAFA"
+    ctx.fillRect(mx, my, mw, mHeaderH)
+
+    // Dynamic island pill
+    const islandW = Math.round(36 * scaleFactor)
+    const islandH = Math.round(6 * scaleFactor)
+    roundedRectPath(
+      ctx,
+      mx + (mw - islandW) / 2,
+      my + Math.round(6 * scaleFactor),
+      islandW,
+      islandH,
+      999
+    )
+    ctx.fillStyle = "#09090B"
+    ctx.fill()
+
+    // Mobile URL pill
+    const mPillW = Math.max(40, mw - Math.round(16 * scaleFactor))
+    const mPillH = Math.round(12 * scaleFactor)
+    const mPillX = mx + (mw - mPillW) / 2
+    const mPillY = my + Math.round(15 * scaleFactor)
+    roundedRectPath(ctx, mPillX, mPillY, mPillW, mPillH, 999)
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255,255,255,0.08)"
+      : "rgba(0,0,0,0.06)"
+    ctx.fill()
+
+    ctx.font = `500 ${Math.round(7.5 * scaleFactor)}px "DM Sans", sans-serif`
+    ctx.fillStyle = isDarkChrome ? "#D4D4D8" : "#3F3F46"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText(
+      truncateTextWithEllipsis(ctx, displayUrl, mPillW - 8),
+      mx + mw / 2,
+      mPillY + mPillH / 2 + 0.5
+    )
+    ctx.textAlign = "left"
+
+    const mFooterH = Math.round(12 * scaleFactor)
+    const mViewY = my + mHeaderH
+    const mViewH = Math.max(20, mh - mHeaderH - mFooterH)
+
+    const mobileShotUrl =
+      state.customMobileScreenshotUrl ||
+      (state.metadata?.screenshotUrl
+        ? `${state.metadata.screenshotUrl}${state.metadata.screenshotUrl.includes("?") ? "&" : "?"}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
+        : null) ||
+      screenshotSrc
+    const mobileImg = (await loadImageSafe(mobileShotUrl)) ?? shotImg
+    if (mobileImg) {
+      drawCoverImage(ctx, mobileImg, mx, mViewY, mw, mViewH, true)
+    } else {
+      ctx.fillStyle = isDarkChrome ? "#0B0B0E" : "#FFFFFF"
+      ctx.fillRect(mx, mViewY, mw, mViewH)
+      const mPad = Math.round(10 * scaleFactor)
+      ctx.font = `700 ${Math.round(10 * scaleFactor)}px "Instrument Sans", sans-serif`
+      ctx.fillStyle = isDarkChrome ? "#FAFAFA" : "#09090B"
+      ctx.textBaseline = "top"
+      const mTitleLines = wrapLines(
+        ctx,
+        state.metadata?.title || displayUrl,
+        mw - mPad * 2,
+        3
+      )
+      mTitleLines.forEach((line, idx) => {
+        ctx.fillText(
+          line,
+          mx + mPad,
+          mViewY + Math.round(24 * scaleFactor) + idx * Math.round(13 * scaleFactor)
+        )
+      })
+    }
+
+    // Bottom home bar indicator
+    const homeW = Math.round(38 * scaleFactor)
+    const homeH = Math.round(3.5 * scaleFactor)
+    roundedRectPath(
+      ctx,
+      mx + (mw - homeW) / 2,
+      my + mh - Math.round(7 * scaleFactor),
+      homeW,
+      homeH,
+      999
+    )
+    ctx.fillStyle = isDarkChrome
+      ? "rgba(255,255,255,0.32)"
+      : "rgba(0,0,0,0.25)"
+    ctx.fill()
+
+    // Outer phone bezel stroke
+    ctx.lineWidth = Math.max(2, Math.round(3 * scaleFactor))
+    ctx.strokeStyle = isDarkChrome ? "#27272A" : "#18181B"
+    roundedRectPath(ctx, mx, my, mw, mh, mRadii)
+    ctx.stroke()
+
+    ctx.restore()
+  }
 }
 
 function drawCoverOrEmeraldMesh(
@@ -2275,8 +2472,12 @@ async function drawSocialMode(
   const cardH = isPill
     ? Math.round(Math.min(height * 0.42, 195 * scaleFactor))
     : ctaRelY + ctaH + pad
-  const cx = Math.round((width - cardW) / 2)
-  const cy = Math.round((height - cardH) / 2)
+  const cx = Math.round(
+    (width - cardW) / 2 + ((state.frameOffsetX ?? 0) / 100) * width
+  )
+  const cy = Math.round(
+    (height - cardH) / 2 + ((state.frameOffsetY ?? 0) / 100) * height
+  )
   const cardR = isPill ? Math.round(cardH / 2) : Math.round(28 * scaleFactor)
 
   // Drop shadow
@@ -2626,6 +2827,258 @@ async function drawSocialMode(
   ctx.restore()
 }
 
+function drawCodeMode(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  const minDim = Math.min(width, height)
+  const userScale = state.frameScale / 100
+  const scaleFactor = userScale * (minDim / 500)
+  const isDark = state.codeTheme !== "light"
+  const accentColor = resolveTabAccentColor(state)
+  const displayUrl = formatDisplayUrl(state.url)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
+  const monoFont = getResolvedFont(
+    "--font-geist-mono",
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  )
+  const sansFont = getResolvedFont("--font-sans", '"DM Sans", sans-serif')
+
+  const offX = ((state.frameOffsetX ?? 0) / 100) * width
+  const offY = ((state.frameOffsetY ?? 0) / 100) * height
+
+  if (state.codeCardStyle === "changelog") {
+    const entries = parseChangelogItems(state.changelogItems)
+    const cardW = Math.round(Math.min(width * 0.86 * userScale, 440 * scaleFactor))
+    const pad = Math.round(20 * scaleFactor)
+    const rowH = Math.round(32 * scaleFactor)
+    const rowGap = Math.round(8 * scaleFactor)
+    const headerH = Math.round(74 * scaleFactor)
+    const cardH =
+      pad +
+      headerH +
+      entries.length * rowH +
+      Math.max(0, entries.length - 1) * rowGap +
+      pad
+    const cx = Math.round((width - cardW) / 2 + offX)
+    const cy = Math.round((height - cardH) / 2 + offY)
+    const cardR = Math.round(24 * scaleFactor)
+
+    if (state.frameShadow > 0) {
+      ctx.save()
+      ctx.shadowColor = `rgba(0, 0, 0, ${0.18 + (state.frameShadow / 100) * 0.42})`
+      ctx.shadowBlur = Math.round(42 * scaleFactor * (state.frameShadow / 100))
+      ctx.shadowOffsetY = Math.round(18 * scaleFactor * (state.frameShadow / 100))
+      roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+      ctx.fillStyle = isDark ? "#0D0D11" : "#FFFFFF"
+      ctx.fill()
+      ctx.restore()
+    }
+
+    ctx.save()
+    roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+    ctx.clip()
+
+    ctx.fillStyle = isDark ? "#0D0D11" : "#FFFFFF"
+    ctx.fillRect(cx, cy, cardW, cardH)
+
+    const verText = state.changelogVersion || "v2.4.0"
+    ctx.font = `700 ${Math.round(11 * scaleFactor)}px ${monoFont}`
+    const verW = Math.round(ctx.measureText(verText).width + 20 * scaleFactor)
+    const verH = Math.round(22 * scaleFactor)
+    roundedRectPath(ctx, cx + pad, cy + pad, verW, verH, 999)
+    ctx.fillStyle = accentColor
+    ctx.fill()
+    ctx.fillStyle = "#FFFFFF"
+    ctx.textBaseline = "middle"
+    ctx.fillText(
+      verText,
+      cx + pad + Math.round(10 * scaleFactor),
+      cy + pad + verH / 2 + 0.5
+    )
+
+    ctx.font = `500 ${Math.round(11 * scaleFactor)}px ${sansFont}`
+    ctx.fillStyle = isDark ? "rgba(250,250,250,0.6)" : "rgba(9,9,11,0.6)"
+    ctx.fillText(
+      state.changelogDate || "Just Shipped",
+      cx + pad + verW + Math.round(8 * scaleFactor),
+      cy + pad + verH / 2 + 0.5
+    )
+
+    ctx.font = `700 ${Math.round(18 * scaleFactor)}px ${headingFont}`
+    ctx.fillStyle = isDark ? "#FAFAFA" : "#09090B"
+    ctx.textBaseline = "top"
+    const titleText = truncateTextWithEllipsis(
+      ctx,
+      state.changelogTitle || "Interactive Stage & Duo Device Showcases",
+      cardW - pad * 2
+    )
+    ctx.fillText(titleText, cx + pad, cy + pad + verH + Math.round(12 * scaleFactor))
+
+    let rowY = cy + pad + headerH
+    entries.forEach((entry) => {
+      roundedRectPath(ctx, cx + pad, rowY, cardW - pad * 2, rowH, Math.round(11 * scaleFactor))
+      ctx.fillStyle = isDark ? "rgba(255,255,255,0.04)" : "rgba(24,24,27,0.05)"
+      ctx.fill()
+
+      ctx.font = `700 ${Math.round(9 * scaleFactor)}px ${monoFont}`
+      const tagW = Math.round(ctx.measureText(entry.tag).width + 12 * scaleFactor)
+      const tagH = Math.round(18 * scaleFactor)
+      const tagX = cx + pad + Math.round(10 * scaleFactor)
+      const tagY = rowY + (rowH - tagH) / 2
+      roundedRectPath(ctx, tagX, tagY, tagW, tagH, Math.round(5 * scaleFactor))
+      ctx.fillStyle = entry.bg
+      ctx.fill()
+      ctx.fillStyle = entry.color
+      ctx.textBaseline = "middle"
+      ctx.fillText(entry.tag, tagX + Math.round(6 * scaleFactor), rowY + rowH / 2 + 0.5)
+
+      ctx.font = `500 ${Math.round(11.5 * scaleFactor)}px ${sansFont}`
+      ctx.fillStyle = isDark ? "rgba(250,250,250,0.9)" : "rgba(9,9,11,0.9)"
+      const textX = tagX + tagW + Math.round(10 * scaleFactor)
+      const maxTextW = Math.max(40, cx + cardW - pad - Math.round(10 * scaleFactor) - textX)
+      ctx.fillText(
+        truncateTextWithEllipsis(ctx, entry.text, maxTextW),
+        textX,
+        rowY + rowH / 2 + 0.5
+      )
+      rowY += rowH + rowGap
+    })
+
+    ctx.lineWidth = Math.max(1, scaleFactor)
+    ctx.strokeStyle = isDark ? "rgba(255,255,255,0.14)" : "rgba(9,9,11,0.1)"
+    roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
+
+  const codeLines = (state.codeContent || "").split("\n").slice(0, 16)
+  const cardW = Math.round(Math.min(width * 0.88 * userScale, 450 * scaleFactor))
+  const headerH = Math.round(36 * scaleFactor)
+  const footerH = Math.round(26 * scaleFactor)
+  const pad = Math.round(16 * scaleFactor)
+  const lineH = Math.round(19 * scaleFactor)
+  const bodyH = pad * 2 + Math.max(1, codeLines.length) * lineH
+  const cardH = headerH + bodyH + footerH
+  const cx = Math.round((width - cardW) / 2 + offX)
+  const cy = Math.round((height - cardH) / 2 + offY)
+  const cardR = Math.round(20 * scaleFactor)
+
+  if (state.frameShadow > 0) {
+    ctx.save()
+    ctx.shadowColor = `rgba(0, 0, 0, ${0.18 + (state.frameShadow / 100) * 0.42})`
+    ctx.shadowBlur = Math.round(42 * scaleFactor * (state.frameShadow / 100))
+    ctx.shadowOffsetY = Math.round(18 * scaleFactor * (state.frameShadow / 100))
+    roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+    ctx.fillStyle = isDark ? "#0B0B0F" : "#FFFFFF"
+    ctx.fill()
+    ctx.restore()
+  }
+
+  ctx.save()
+  roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+  ctx.clip()
+
+  ctx.fillStyle = isDark ? "#0B0B0F" : "#FFFFFF"
+  ctx.fillRect(cx, cy, cardW, cardH)
+
+  ctx.fillStyle = isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"
+  ctx.fillRect(cx, cy, cardW, headerH)
+  const dotColors = ["#FF5F57", "#FEBC2E", "#28C840"]
+  const dotR = Math.max(3, Math.round(4.5 * scaleFactor))
+  dotColors.forEach((col, idx) => {
+    ctx.beginPath()
+    ctx.arc(
+      cx + pad + dotR + idx * Math.round(14 * scaleFactor),
+      cy + headerH / 2,
+      dotR,
+      0,
+      Math.PI * 2
+    )
+    ctx.fillStyle = col
+    ctx.fill()
+  })
+
+  ctx.font = `500 ${Math.round(11 * scaleFactor)}px ${monoFont}`
+  ctx.fillStyle = isDark ? "rgba(244,244,245,0.8)" : "rgba(24,24,27,0.8)"
+  ctx.textAlign = "center"
+  ctx.textBaseline = "middle"
+  ctx.fillText(
+    state.codeFilename || "prettylink.config.ts",
+    cx + cardW / 2,
+    cy + headerH / 2 + 0.5
+  )
+  ctx.textAlign = "left"
+
+  ctx.font = `400 ${Math.round(11.5 * scaleFactor)}px ${monoFont}`
+  codeLines.forEach((line, idx) => {
+    const lineY = cy + headerH + pad + idx * lineH + lineH / 2
+    let cursorX = cx + pad
+    if (state.codeShowLineNumbers) {
+      ctx.fillStyle = isDark ? "rgba(244,244,245,0.32)" : "rgba(24,24,27,0.35)"
+      ctx.fillText(String(idx + 1), cursorX, lineY)
+      cursorX += Math.round(26 * scaleFactor)
+    }
+    const tokens = tokenizeCodeLine(line)
+    for (const tok of tokens) {
+      if (cursorX > cx + cardW - pad) break
+      ctx.fillStyle = getTokenColor(tok.kind, isDark)
+      ctx.fillText(tok.text, cursorX, lineY)
+      cursorX += ctx.measureText(tok.text).width
+    }
+  })
+
+  const langMeta =
+    CODE_LANGUAGES.find((l) => l.id === state.codeLanguage) ??
+    CODE_LANGUAGES[0]!
+  const footerY = cy + cardH - footerH
+  ctx.fillStyle = isDark ? "rgba(255,255,255,0.02)" : "#FAFAFA"
+  ctx.fillRect(cx, footerY, cardW, footerH)
+  ctx.font = `500 ${Math.round(9.5 * scaleFactor)}px ${monoFont}`
+  ctx.fillStyle = isDark ? "rgba(244,244,245,0.5)" : "rgba(24,24,27,0.5)"
+  ctx.fillText(langMeta.label, cx + pad, footerY + footerH / 2 + 0.5)
+  ctx.textAlign = "right"
+  ctx.fillText(displayUrl, cx + cardW - pad, footerY + footerH / 2 + 0.5)
+  ctx.textAlign = "left"
+
+  ctx.lineWidth = Math.max(1, scaleFactor)
+  ctx.strokeStyle = isDark ? "rgba(255,255,255,0.14)" : "rgba(9,9,11,0.1)"
+  roundedRectPath(ctx, cx, cy, cardW, cardH, cardR)
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawSpotlightOverlay(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  if (!state.showSpotlight) return
+  const minDim = Math.min(width, height)
+  const cx = ((state.spotlightX ?? 50) / 100) * width
+  const cy = ((state.spotlightY ?? 50) / 100) * height
+  const r = ((state.spotlightRadius ?? 28) / 100) * minDim
+  const dimAlpha = Math.min(0.88, (state.spotlightDim ?? 55) / 100)
+
+  ctx.save()
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.78, cx, cy, r)
+  grad.addColorStop(0, "rgba(0, 0, 0, 0)")
+  grad.addColorStop(1, `rgba(0, 0, 0, ${dimAlpha})`)
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, width, height)
+
+  ctx.beginPath()
+  ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2)
+  ctx.lineWidth = Math.max(1.2, minDim / 450)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.38)"
+  ctx.stroke()
+  ctx.restore()
+}
+
 export async function renderStudioToCanvas(
   state: StudioState,
   options: { scale: ExportScale; format: ExportFormat }
@@ -2668,12 +3121,25 @@ export async function renderStudioToCanvas(
 
   drawPosterOverlays(ctx, state, logicalW, logicalH, faviconImg)
 
+  ctx.save()
+  if (state.frameTilt && state.frameTilt !== "flat") {
+    const [a, b, c, d] = getFrameTiltMatrix(state.frameTilt)
+    ctx.translate(logicalW / 2, logicalH / 2)
+    ctx.transform(a, b, c, d, 0, 0)
+    ctx.translate(-logicalW / 2, -logicalH / 2)
+  }
+
   if (state.mode === "web") {
     await drawWebMode(ctx, state, logicalW, logicalH, faviconImg)
     drawWebQrBadge(ctx, state, logicalW, logicalH)
-  } else {
+  } else if (state.mode === "social") {
     await drawSocialMode(ctx, state, logicalW, logicalH)
+  } else {
+    drawCodeMode(ctx, state, logicalW, logicalH)
   }
+  ctx.restore()
+
+  drawSpotlightOverlay(ctx, state, logicalW, logicalH)
 
   ctx.restore()
   return canvas
@@ -2707,10 +3173,6 @@ export async function exportStudioBlob(
       options.format === "png" ? undefined : 0.94
     )
   })
-
-  if (!state.showCapturedFrom) {
-    return rawBlob
-  }
 
   const trimmedTabTitle =
     typeof state.tabTitle === "string" ? state.tabTitle.trim() : ""

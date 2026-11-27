@@ -90,10 +90,18 @@ async function tryFetchRasterImage(
   }
 }
 
-async function tryMicrolink(targetUrl: string) {
+async function tryMicrolink(
+  targetUrl: string,
+  colorScheme: "light" | "dark",
+  viewport: "desktop" | "mobile"
+) {
+  const vpParams =
+    viewport === "mobile"
+      ? "viewport.width=390&viewport.height=844&viewport.isMobile=true"
+      : "viewport.width=1280&viewport.height=900"
   const endpoint = `https://api.microlink.io/?url=${encodeURIComponent(
     targetUrl
-  )}&screenshot=true&meta=false&viewport.width=1280&viewport.height=900`
+  )}&screenshot=true&meta=false&${vpParams}&colorScheme=${colorScheme}`
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10_000)
@@ -126,10 +134,14 @@ async function tryMicrolink(targetUrl: string) {
   }
 }
 
-async function tryWordPressMshots(targetUrl: string) {
+async function tryWordPressMshots(
+  targetUrl: string,
+  viewport: "desktop" | "mobile"
+) {
+  const dims = viewport === "mobile" ? "w=390&h=844" : "w=1280&h=960"
   const mshotsUrl = `https://s0.wp.com/mshots/v1/${encodeURIComponent(
     targetUrl
-  )}?w=1280&h=960`
+  )}?${dims}`
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await tryFetchRasterImage(mshotsUrl, 8000)
@@ -141,13 +153,24 @@ async function tryWordPressMshots(targetUrl: string) {
   return null
 }
 
-async function tryThumIo(targetUrl: string) {
-  const thumUrl = `https://image.thum.io/get/width/1280/crop/900/noanimate/${targetUrl}`
+async function tryThumIo(
+  targetUrl: string,
+  viewport: "desktop" | "mobile"
+) {
+  const dims =
+    viewport === "mobile" ? "width/390/crop/844" : "width/1280/crop/900"
+  const thumUrl = `https://image.thum.io/get/${dims}/noanimate/${targetUrl}`
   return tryFetchRasterImage(thumUrl, 8000)
 }
 
 export async function GET(request: NextRequest) {
   const rawUrl = request.nextUrl.searchParams.get("url")
+  const colorScheme =
+    request.nextUrl.searchParams.get("theme") === "dark" ? "dark" : "light"
+  const viewport =
+    request.nextUrl.searchParams.get("viewport") === "mobile"
+      ? "mobile"
+      : "desktop"
   if (!rawUrl) {
     return Response.json({ error: "Missing url parameter." }, { status: 400 })
   }
@@ -158,7 +181,8 @@ export async function GET(request: NextRequest) {
   }
 
   const targetUrl = check.url.toString()
-  const cached = getCachedScreenshot(targetUrl)
+  const cacheKey = `${targetUrl}|${colorScheme}|${viewport}`
+  const cached = getCachedScreenshot(cacheKey)
   if (cached) {
     return new Response(cached.buffer.slice(0), {
       status: 200,
@@ -171,9 +195,9 @@ export async function GET(request: NextRequest) {
   }
 
   const captured =
-    (await tryMicrolink(targetUrl)) ??
-    (await tryWordPressMshots(targetUrl)) ??
-    (await tryThumIo(targetUrl))
+    (await tryMicrolink(targetUrl, colorScheme, viewport)) ??
+    (await tryWordPressMshots(targetUrl, viewport)) ??
+    (await tryThumIo(targetUrl, viewport))
 
   if (!captured) {
     return Response.json(
@@ -182,7 +206,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  setCachedScreenshot(targetUrl, captured.buffer, captured.contentType)
+  setCachedScreenshot(cacheKey, captured.buffer, captured.contentType)
 
   return new Response(captured.buffer, {
     status: 200,

@@ -58,12 +58,20 @@ export function createZipBytes(
   entries: ZipFileEntry[],
   now = new Date()
 ): Uint8Array {
+  if (entries.length > 0xffff) {
+    throw new Error(
+      "ZIP archive entry count exceeds maximum 65535-entry limit."
+    )
+  }
   const encoder = new TextEncoder()
   const { dosTime, dosDate } = getDosDateTime(now)
 
   const prepared = entries.map((entry) => {
     const safeName = sanitizeZipEntryName(entry.name)
     const nameBytes = encoder.encode(safeName)
+    if (nameBytes.length > 0xffff) {
+      throw new Error("ZIP entry filename exceeds maximum 65535-byte limit.")
+    }
     const crc = crc32(entry.data)
     return {
       nameBytes,

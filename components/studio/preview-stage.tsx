@@ -46,7 +46,7 @@ import {
   resolveAspectDimensions,
   type CustomPreset,
 } from "@/lib/presets"
-import type { StudioState } from "@/lib/studio-types"
+import { DEFAULT_STUDIO_STATE, type StudioState } from "@/lib/studio-types"
 import { formatDisplayUrl } from "@/lib/url-utils"
 
 export function PreviewStage({
@@ -72,6 +72,8 @@ export function PreviewStage({
   onSaveCustomPreset,
   onDeleteCustomPreset,
   onDropImage,
+  onChange,
+  getUploadResetToken,
 }: {
   state: StudioState
   isFetching: boolean
@@ -92,9 +94,14 @@ export function PreviewStage({
   onRedo?: () => void
   customPresets?: CustomPreset[]
   onApplyCustomPreset?: (preset: CustomPreset) => void
-  onSaveCustomPreset?: (name: string) => void
+  onSaveCustomPreset?: (name: string) => boolean | void
   onDeleteCustomPreset?: (id: string) => void
   onDropImage: (dataUrl: string) => void
+  onChange?: (
+    patch: Partial<StudioState>,
+    options?: { forceHistoryStep?: boolean; skipHistory?: boolean }
+  ) => void
+  getUploadResetToken?: () => number
 }) {
   const [zoom, setZoom] = React.useState(1)
   const [dragging, setDragging] = React.useState(false)
@@ -102,7 +109,32 @@ export function PreviewStage({
   const [savingPreset, setSavingPreset] = React.useState(false)
   const [presetName, setPresetName] = React.useState("")
   const presetInputRef = React.useRef<HTMLInputElement>(null)
+  const presetsTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const dropTokenRef = React.useRef(0)
   const { width, height } = resolveAspectDimensions(state)
+
+  const backgroundSelectionKey = [
+    state.backgroundType,
+    state.colorFillMode,
+    state.gradientId,
+    state.gradientFrom,
+    state.gradientVia,
+    state.gradientTo,
+    state.gradientAngle,
+    state.solidColor,
+    state.backgroundImageUrl,
+    state.unsplashPhotoId,
+    state.unsplashPhotographer,
+    state.bgPattern,
+    state.bgPatternOpacity,
+    state.bgBlur,
+    state.bgDim,
+    state.noiseOverlay,
+  ].join("|")
+
+  React.useEffect(() => {
+    dropTokenRef.current += 1
+  }, [backgroundSelectionKey])
 
   React.useEffect(() => {
     if (savingPreset) {
@@ -112,17 +144,78 @@ export function PreviewStage({
     }
   }, [savingPreset])
 
+  const closeSavePresetForm = () => {
+    setPresetName("")
+    setSavingPreset(false)
+    requestAnimationFrame(() => {
+      presetsTriggerRef.current?.focus()
+    })
+  }
+
   const handleCommitSavePreset = (e?: React.FormEvent) => {
     e?.preventDefault()
     const trimmed = presetName.trim()
     if (!trimmed) return
-    onSaveCustomPreset?.(trimmed)
-    setPresetName("")
-    setSavingPreset(false)
+    const saved = onSaveCustomPreset?.(trimmed)
+    if (saved === false) return
+    closeSavePresetForm()
   }
 
-  const doesPatchMatchState = (patch: Partial<StudioState>) =>
-    (Object.keys(patch) as Array<keyof StudioState>).every((key) => {
+  const NON_STYLE_TEMPLATE_KEYS = React.useMemo(
+    () =>
+      new Set<keyof StudioState>([
+        "url",
+        "metadata",
+        "tabTitle",
+        "customScreenshotUrl",
+        "customFaviconUrl",
+        "socialDisplayName",
+        "socialHandle",
+        "socialBio",
+        "socialMetrics",
+        "socialCtaLabel",
+        "socialAvatarUrl",
+        "socialCoverUrl",
+        "posterHeadline",
+        "posterAccentText",
+        "posterFooterTitle",
+        "posterFooterSubtitle",
+        "calloutText",
+        "customMobileScreenshotUrl",
+        "codeFilename",
+        "codeContent",
+        "changelogVersion",
+        "changelogDate",
+        "changelogTitle",
+        "changelogItems",
+      ]),
+    []
+  )
+
+  const DEFAULTED_TEMPLATE_STYLE_KEYS = React.useMemo(
+    () =>
+      [
+        "bgPattern",
+        "borderStyle",
+        "frameTilt",
+        "showSpotlight",
+        "showCornerIcon",
+        "showPosterHeader",
+        "showPosterFooter",
+        "showCalloutBadge",
+        "webShowQr",
+      ] as const,
+    []
+  )
+
+  const doesPatchMatchState = (
+    patch: Partial<StudioState>,
+    options?: { isQuickTemplate?: boolean }
+  ) => {
+    const matchesPatchKeys = (
+      Object.keys(patch) as Array<keyof StudioState>
+    ).every((key) => {
+      if (NON_STYLE_TEMPLATE_KEYS.has(key)) return true
       const expected = patch[key]
       if (expected === undefined) return true
       if (
@@ -135,11 +228,25 @@ export function PreviewStage({
       return state[key] === expected
     })
 
+    if (!matchesPatchKeys) return false
+
+    if (options?.isQuickTemplate) {
+      return DEFAULTED_TEMPLATE_STYLE_KEYS.every((key) => {
+        const expected =
+          patch[key] !== undefined ? patch[key] : DEFAULT_STUDIO_STATE[key]
+        return state[key] === expected
+      })
+    }
+
+    return true
+  }
+
   const isCustomPresetActive = (preset: CustomPreset) =>
     state.mode === preset.mode && doesPatchMatchState(preset.patch)
 
   const isTemplateActive = (tpl: (typeof QUICK_TEMPLATES)[number]) =>
-    state.mode === tpl.mode && doesPatchMatchState(tpl.patch)
+    state.mode === tpl.mode &&
+    doesPatchMatchState(tpl.patch, { isQuickTemplate: true })
 
   const activeCustomPreset = customPresets.find(isCustomPresetActive) ?? null
   const activeTemplate = QUICK_TEMPLATES.find(isTemplateActive) ?? null
@@ -156,8 +263,16 @@ export function PreviewStage({
     setDragging(false)
     const file = e.dataTransfer.files?.[0]
     if (!file || !file.type.startsWith("image/")) return
+    const dropToken = ++dropTokenRef.current
+    const resetToken = getUploadResetToken?.() ?? 0
     const reader = new FileReader()
     reader.onload = () => {
+      if (
+        dropTokenRef.current !== dropToken ||
+        (getUploadResetToken?.() ?? 0) !== resetToken
+      ) {
+        return
+      }
       if (typeof reader.result === "string") {
         onDropImage(reader.result)
       }
@@ -396,6 +511,7 @@ export function PreviewStage({
           zoomMultiplier={zoom}
           maxWidthPx={580}
           maxHeightPx={540}
+          onChange={onChange}
         />
       </div>
 
@@ -427,10 +543,7 @@ export function PreviewStage({
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() => {
-                setSavingPreset(false)
-                setPresetName("")
-              }}
+              onClick={closeSavePresetForm}
               aria-label="Cancel saving preset"
               className="size-7 rounded-lg"
             >
@@ -442,6 +555,7 @@ export function PreviewStage({
         <div className="flex max-w-full items-center justify-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger
+              ref={presetsTriggerRef}
               className="group inline-flex h-10 max-w-full min-w-0 items-center gap-2 rounded-xl border border-border/80 bg-card/90 px-3 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md transition-colors hover:bg-muted/70 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-popup-open:bg-muted data-popup-open:ring-1 data-popup-open:ring-border [@media(pointer:coarse)]:min-h-11"
             >
               {activePresetDisplay ? (
@@ -536,17 +650,17 @@ export function PreviewStage({
                           </span>
                         </DropdownMenuRadioItem>
                         {onDeleteCustomPreset && (
-                          <button
-                            type="button"
+                          <DropdownMenuItem
+                            closeOnClick={false}
                             onClick={(e) => {
                               e.stopPropagation()
                               onDeleteCustomPreset(preset.id)
                             }}
                             aria-label={`Delete ${preset.name} preset`}
-                            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            className="flex size-7 shrink-0 items-center justify-center rounded-lg p-0 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive [@media(pointer:coarse)]:min-h-9 [@media(pointer:coarse)]:min-w-9"
                           >
                             <IconTrash className="size-3.5" aria-hidden="true" />
-                          </button>
+                          </DropdownMenuItem>
                         )}
                       </div>
                     ))}

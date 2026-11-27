@@ -1,4 +1,4 @@
-export type StudioMode = "web" | "social"
+export type StudioMode = "web" | "social" | "code"
 
 export type BackgroundType = "none" | "color" | "image" | "unsplash"
 export type BackgroundPattern =
@@ -13,7 +13,24 @@ export type BackgroundPattern =
 export type ColorFillMode = "gradient" | "solid"
 export type BorderStyle = "sharp" | "curved" | "round"
 
-export type WebLayoutStyle = "offset" | "centered" | "docked" | "floating" | "tab"
+export type WebLayoutStyle =
+  | "offset"
+  | "centered"
+  | "docked"
+  | "floating"
+  | "tab"
+  | "duo"
+export type FrameTiltPreset = "flat" | "tilt-left" | "tilt-right" | "float-up"
+export type CodeCardStyle = "snippet" | "changelog"
+export type CodeLanguageId =
+  | "typescript"
+  | "javascript"
+  | "python"
+  | "rust"
+  | "go"
+  | "bash"
+  | "json"
+  | "css"
 export type BrowserChromeStyle =
   | "chrome"
   | "safari"
@@ -134,10 +151,31 @@ export interface StudioState {
   frameOffsetX: number
   frameOffsetY: number
   frameShadow: number
+  frameTilt: FrameTiltPreset
   showNavButtons: boolean
   webShowQr: boolean
   showCapturedFrom: boolean
   customScreenshotUrl: string
+  customMobileScreenshotUrl: string
+
+  // Spotlight Focus overlay
+  showSpotlight: boolean
+  spotlightX: number
+  spotlightY: number
+  spotlightRadius: number
+  spotlightDim: number
+
+  // Code & Changelog mode options
+  codeCardStyle: CodeCardStyle
+  codeTheme: ChromeTheme
+  codeLanguage: CodeLanguageId
+  codeFilename: string
+  codeShowLineNumbers: boolean
+  codeContent: string
+  changelogVersion: string
+  changelogDate: string
+  changelogTitle: string
+  changelogItems: string
 
   // Tab showcase & poster branding options
   tabTitle: string
@@ -199,7 +237,7 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   unsplashPhotoId: "",
   unsplashPhotographer: "",
   bgBlur: 0,
-  bgDim: 15,
+  bgDim: 0,
 
   borderStyle: "round",
 
@@ -210,10 +248,37 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   frameOffsetX: 0,
   frameOffsetY: 0,
   frameShadow: 65,
+  frameTilt: "flat",
   showNavButtons: true,
   webShowQr: false,
   showCapturedFrom: true,
   customScreenshotUrl: "",
+  customMobileScreenshotUrl: "",
+
+  showSpotlight: false,
+  spotlightX: 50,
+  spotlightY: 50,
+  spotlightRadius: 28,
+  spotlightDim: 55,
+
+  codeCardStyle: "snippet",
+  codeTheme: "dark",
+  codeLanguage: "typescript",
+  codeFilename: "prettylink.config.ts",
+  codeShowLineNumbers: true,
+  codeContent: `export const studio = createPrettyLink({
+  domain: "www.lerhem.space",
+  layout: "duo-showcase",
+  theme: "match-chrome",
+  export: ["png", "webp", "social-kit.zip"],
+})`,
+  changelogVersion: "v2.4.0",
+  changelogDate: "Just Shipped",
+  changelogTitle: "Interactive Stage & Duo Device Showcases",
+  changelogItems: `+ Desktop + Mobile Duo layout with live mobile viewport
+* Direct canvas drag-to-position with magnetic snap guides
+* 3D perspective tilt presets & draggable spotlight focus
+✓ Complementary brand backdrop & automatic URL metadata`,
 
   tabTitle: "",
   tabAccentColor: "",
