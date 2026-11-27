@@ -150,14 +150,30 @@ export async function GET(req: NextRequest) {
   const accentColor = resolveTabAccentColor(state)
   const isDarkChrome = state.chromeTheme === "dark"
 
+  const SAFE_OG_HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
+  const sanitizeOgHex = (val: string | undefined, fallback: string): string => {
+    const trimmed = typeof val === "string" ? val.trim() : ""
+    return SAFE_OG_HEX_RE.test(trimmed) ? trimmed : fallback
+  }
+
+  const safeSolid = sanitizeOgHex(state.solidColor, "#4F46E5")
+  const safeFrom = sanitizeOgHex(state.gradientFrom, "#7C3AED")
+  const safeTo = sanitizeOgHex(state.gradientTo, "#3B82F6")
+  const trimmedVia =
+    typeof state.gradientVia === "string" ? state.gradientVia.trim() : ""
+  const safeVia = SAFE_OG_HEX_RE.test(trimmedVia) ? trimmedVia : ""
+  const safeAngle = Number.isFinite(state.gradientAngle)
+    ? Math.max(0, Math.min(360, Math.round(state.gradientAngle)))
+    : 135
+
   const bgStyle =
     state.backgroundType === "none"
       ? "linear-gradient(135deg, #18181B 0%, #27272A 100%)"
       : state.backgroundType === "color" && state.colorFillMode === "solid"
-        ? state.solidColor || "#4F46E5"
-        : state.gradientVia?.trim()
-          ? `linear-gradient(${state.gradientAngle}deg, ${state.gradientFrom} 0%, ${state.gradientVia} 50%, ${state.gradientTo} 100%)`
-          : `linear-gradient(${state.gradientAngle}deg, ${state.gradientFrom} 0%, ${state.gradientTo} 100%)`
+        ? safeSolid
+        : safeVia
+          ? `linear-gradient(${safeAngle}deg, ${safeFrom} 0%, ${safeVia} 50%, ${safeTo} 100%)`
+          : `linear-gradient(${safeAngle}deg, ${safeFrom} 0%, ${safeTo} 100%)`
 
   const { fontFamily, fonts } = await resolveOgFontConfig(
     state.fontStyle ?? "instrument"

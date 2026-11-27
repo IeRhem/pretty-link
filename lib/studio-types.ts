@@ -154,7 +154,6 @@ export interface StudioState {
   frameTilt: FrameTiltPreset
   showNavButtons: boolean
   webShowQr: boolean
-  showCapturedFrom: boolean
   customScreenshotUrl: string
   customMobileScreenshotUrl: string
 
@@ -251,7 +250,6 @@ export const DEFAULT_STUDIO_STATE: StudioState = {
   frameTilt: "flat",
   showNavButtons: true,
   webShowQr: false,
-  showCapturedFrom: true,
   customScreenshotUrl: "",
   customMobileScreenshotUrl: "",
 

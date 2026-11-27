@@ -57,7 +57,7 @@ export function parseSocialStats(
   if (!metrics || !metrics.trim()) return []
 
   const parts = metrics
-    .split(/[·|,]/)
+    .split(/[·|]|(?<!\d),|,(?!\d)/)
     .map((s) => s.trim())
     .filter(Boolean)
 
@@ -762,7 +762,6 @@ export const QUICK_TEMPLATES: QuickTemplate[] = [
       browserChrome: "mobile",
       chromeTheme: "dark",
       webShowQr: true,
-      showCapturedFrom: true,
       metadata: null,
     },
   },
@@ -991,6 +990,16 @@ export function computeStyleSwatch(state: StudioState): string {
     : `linear-gradient(${angle}deg, ${from} 0%, ${to} 100%)`
 }
 
+export function resolveUnsplashPhotoUrl(photoId?: string): string {
+  if (!photoId) return ""
+  const found = CURATED_UNSPLASH_PHOTOS.find((p) => p.id === photoId)
+  if (found) return found.exportUrl ?? found.fullUrl
+  if (/^photo-[a-z0-9-]+$/i.test(photoId)) {
+    return `https://images.unsplash.com/${photoId}?auto=format&fit=crop&w=1600&q=85`
+  }
+  return ""
+}
+
 /**
  * Extracts style and layout properties for a custom preset while preserving
  * the user's current target URL, fetched metadata, and custom uploaded assets.
@@ -998,6 +1007,12 @@ export function computeStyleSwatch(state: StudioState): string {
 export function extractStylePresetPatch(
   state: StudioState
 ): Partial<StudioState> {
+  const isUnsplash = state.backgroundType === "unsplash"
+  const unsplashUrl = isUnsplash
+    ? state.backgroundImageUrl && !state.backgroundImageUrl.startsWith("data:")
+      ? state.backgroundImageUrl
+      : resolveUnsplashPhotoUrl(state.unsplashPhotoId)
+    : ""
   return {
     mode: state.mode,
     aspectRatioId: state.aspectRatioId,
@@ -1015,8 +1030,9 @@ export function extractStylePresetPatch(
     noiseOverlay: state.noiseOverlay,
     bgPattern: state.bgPattern,
     bgPatternOpacity: state.bgPatternOpacity,
-    unsplashPhotoId: state.unsplashPhotoId,
-    unsplashPhotographer: state.unsplashPhotographer,
+    backgroundImageUrl: unsplashUrl,
+    unsplashPhotoId: isUnsplash ? state.unsplashPhotoId : "",
+    unsplashPhotographer: isUnsplash ? state.unsplashPhotographer : "",
     bgBlur: state.bgBlur,
     bgDim: state.bgDim,
     borderStyle: state.borderStyle,
@@ -1030,7 +1046,6 @@ export function extractStylePresetPatch(
     frameTilt: state.frameTilt,
     showNavButtons: state.showNavButtons,
     webShowQr: state.webShowQr,
-    showCapturedFrom: state.showCapturedFrom,
     showSpotlight: state.showSpotlight,
     spotlightX: state.spotlightX,
     spotlightY: state.spotlightY,
@@ -1058,31 +1073,189 @@ export function extractStylePresetPatch(
   }
 }
 
-export function loadCustomPresets(): CustomPreset[] {
-  if (typeof window === "undefined") return []
+const PRESET_PATCH_SCHEMA: Record<
+  string,
+  "string" | "number" | "boolean" | ReadonlySet<string>
+> = {
+  mode: new Set(["web", "social", "code"]),
+  aspectRatioId: "string",
+  customWidth: "number",
+  customHeight: "number",
+  backgroundType: new Set(["none", "color", "image", "unsplash"]),
+  colorFillMode: new Set(["gradient", "solid"]),
+  gradientId: "string",
+  gradientFrom: "string",
+  gradientVia: "string",
+  gradientTo: "string",
+  gradientAngle: "number",
+  solidColor: "string",
+  noiseOverlay: "boolean",
+  bgPattern: new Set([
+    "none",
+    "dots",
+    "grid",
+    "diagonal",
+    "cross",
+    "rings",
+    "diamond",
+    "spotlight",
+  ]),
+  bgPatternOpacity: "number",
+  backgroundImageUrl: "string",
+  unsplashPhotoId: "string",
+  unsplashPhotographer: "string",
+  bgBlur: "number",
+  bgDim: "number",
+  borderStyle: new Set(["sharp", "curved", "round"]),
+  webLayout: new Set([
+    "offset",
+    "centered",
+    "docked",
+    "floating",
+    "tab",
+    "duo",
+  ]),
+  browserChrome: new Set([
+    "chrome",
+    "safari",
+    "arc",
+    "mobile",
+    "minimal",
+    "none",
+  ]),
+  chromeTheme: new Set(["light", "dark", "glass"]),
+  frameScale: "number",
+  frameOffsetX: "number",
+  frameOffsetY: "number",
+  frameShadow: "number",
+  frameTilt: new Set(["flat", "tilt-left", "tilt-right", "float-up"]),
+  showNavButtons: "boolean",
+  webShowQr: "boolean",
+  showCapturedFrom: "boolean",
+  showSpotlight: "boolean",
+  spotlightX: "number",
+  spotlightY: "number",
+  spotlightRadius: "number",
+  spotlightDim: "number",
+  tabAccentColor: "string",
+  showCornerIcon: "boolean",
+  cornerIconPosition: new Set(["top-left", "top-center", "top-right"]),
+  showPosterHeader: "boolean",
+  posterHeadlineAlign: new Set(["left", "center", "right"]),
+  posterHeadlineSize: "number",
+  showPosterFooter: "boolean",
+  fontStyle: new Set(["instrument", "geist", "mono", "editorial"]),
+  showCalloutBadge: "boolean",
+  calloutText: "string",
+  calloutPosition: new Set(["top-left", "top-center", "top-right"]),
+  socialCardStyle: new Set(["glass", "elevated", "browser", "pill", "bento"]),
+  socialCardTheme: new Set(["light", "dark", "glass"]),
+  socialVerified: "boolean",
+  socialShowQr: "boolean",
+  codeCardStyle: new Set(["snippet", "changelog"]),
+  codeTheme: new Set(["light", "dark", "glass"]),
+  codeLanguage: new Set([
+    "typescript",
+    "javascript",
+    "python",
+    "rust",
+    "go",
+    "bash",
+    "json",
+    "css",
+  ]),
+  codeShowLineNumbers: "boolean",
+}
+
+export function validateStylePresetPatch(
+  rawPatch: unknown
+): Partial<StudioState> | null {
+  if (!rawPatch || typeof rawPatch !== "object" || Array.isArray(rawPatch)) {
+    return null
+  }
+  const obj = rawPatch as Record<string, unknown>
+  const keys = Object.keys(obj)
+  if (keys.length === 0) return null
+
+  const validated: Record<string, unknown> = {}
+  for (const key of keys) {
+    const rule = PRESET_PATCH_SCHEMA[key]
+    if (!rule) return null
+    if (key === "showCapturedFrom") continue
+    const val = obj[key]
+    if (rule instanceof Set) {
+      if (typeof val !== "string" || !rule.has(val)) return null
+      validated[key] = val
+    } else if (rule === "string") {
+      if (typeof val !== "string") return null
+      if (key === "backgroundImageUrl" && val.startsWith("data:")) {
+        return null
+      }
+      validated[key] = val
+    } else if (rule === "number") {
+      if (typeof val !== "number" || !Number.isFinite(val)) return null
+      validated[key] = val
+    } else if (rule === "boolean") {
+      if (typeof val !== "boolean") return null
+      validated[key] = val
+    }
+  }
+  if (
+    validated.backgroundType === "unsplash" &&
+    !validated.backgroundImageUrl &&
+    typeof validated.unsplashPhotoId === "string"
+  ) {
+    validated.backgroundImageUrl = resolveUnsplashPhotoUrl(
+      validated.unsplashPhotoId
+    )
+  }
+  return validated as Partial<StudioState>
+}
+
+function readStoredCustomPresetsResult(): {
+  ok: boolean
+  presets: CustomPreset[]
+} {
+  if (typeof window === "undefined") return { ok: false, presets: [] }
   try {
     const raw = window.localStorage.getItem(CUSTOM_PRESETS_STORAGE_KEY)
-    if (!raw) return []
+    if (raw === null) return { ok: true, presets: [] }
     const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (item): item is CustomPreset =>
-        Boolean(
-          item &&
-            typeof item === "object" &&
-            typeof item.id === "string" &&
-            typeof item.name === "string" &&
-            (item.mode === "web" ||
-              item.mode === "social" ||
-              item.mode === "code") &&
-            typeof item.swatch === "string" &&
-            item.patch &&
-            typeof item.patch === "object"
-        )
-    )
+    if (!Array.isArray(parsed)) return { ok: false, presets: [] }
+    const valid: CustomPreset[] = []
+    for (const item of parsed) {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        typeof item.name === "string" &&
+        (item.mode === "web" ||
+          item.mode === "social" ||
+          item.mode === "code") &&
+        typeof item.swatch === "string" &&
+        typeof item.createdAt === "number"
+      ) {
+        const cleanPatch = validateStylePresetPatch(item.patch)
+        if (cleanPatch) {
+          valid.push({
+            id: item.id,
+            name: item.name,
+            mode: item.mode,
+            swatch: item.swatch,
+            createdAt: item.createdAt,
+            patch: cleanPatch,
+          })
+        }
+      }
+    }
+    return { ok: true, presets: valid }
   } catch {
-    return []
+    return { ok: false, presets: [] }
   }
+}
+
+export function loadCustomPresets(): CustomPreset[] {
+  return readStoredCustomPresetsResult().presets
 }
 
 export function saveCustomPresets(presets: CustomPreset[]): boolean {
@@ -1102,37 +1275,39 @@ export function appendCustomPreset(
   newPreset: CustomPreset,
   currentList: CustomPreset[] = []
 ): { ok: boolean; presets: CustomPreset[] } {
-  const stored = loadCustomPresets()
-  const mergedMap = new Map<string, CustomPreset>()
-  for (const item of currentList) {
-    mergedMap.set(item.id, item)
+  const storedResult = readStoredCustomPresetsResult()
+  if (!storedResult.ok) {
+    return { ok: false, presets: currentList }
   }
-  for (const item of stored) {
+  const mergedMap = new Map<string, CustomPreset>()
+  for (const item of storedResult.presets) {
     mergedMap.set(item.id, item)
   }
   mergedMap.set(newPreset.id, newPreset)
   const next = Array.from(mergedMap.values())
   const ok = saveCustomPresets(next)
-  return { ok, presets: ok ? next : currentList }
+  return { ok, presets: ok ? next : storedResult.presets }
 }
 
 export function removeCustomPreset(
   id: string,
   currentList: CustomPreset[] = []
 ): { ok: boolean; presets: CustomPreset[]; removed?: CustomPreset } {
-  const stored = loadCustomPresets()
-  const mergedMap = new Map<string, CustomPreset>()
-  for (const item of stored) {
-    mergedMap.set(item.id, item)
+  const storedResult = readStoredCustomPresetsResult()
+  if (!storedResult.ok) {
+    return { ok: false, presets: currentList }
   }
-  for (const item of currentList) {
-    if (!mergedMap.has(item.id)) {
-      mergedMap.set(item.id, item)
-    }
+  const mergedMap = new Map<string, CustomPreset>()
+  for (const item of storedResult.presets) {
+    mergedMap.set(item.id, item)
   }
   const removed = mergedMap.get(id)
   mergedMap.delete(id)
   const next = Array.from(mergedMap.values())
   const ok = saveCustomPresets(next)
-  return { ok, presets: next, removed }
+  return {
+    ok,
+    presets: ok ? next : storedResult.presets,
+    removed: ok ? removed : undefined,
+  }
 }

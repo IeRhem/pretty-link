@@ -203,7 +203,6 @@ export function encodeShareState(state: StudioState): string {
     frameTilt: state.frameTilt,
     showNavButtons: state.showNavButtons,
     webShowQr: state.webShowQr,
-    showCapturedFrom: state.showCapturedFrom,
     customScreenshotUrl: state.customScreenshotUrl.startsWith("data:")
       ? ""
       : state.customScreenshotUrl,
@@ -367,7 +366,15 @@ export function decodeShareState(encoded: string): Partial<StudioState> | null {
         }
       } else if (typeof defaultVal === "number") {
         if (typeof val === "number" && Number.isFinite(val)) {
-          validated[key] = val
+          if (key === "spotlightRadius") {
+            validated[key] = Math.max(12, Math.min(55, Math.round(val)))
+          } else if (key === "spotlightX" || key === "spotlightY") {
+            validated[key] = Math.max(10, Math.min(90, Math.round(val)))
+          } else if (key === "spotlightDim") {
+            validated[key] = Math.max(20, Math.min(85, Math.round(val)))
+          } else {
+            validated[key] = val
+          }
         }
       } else if (typeof defaultVal === "boolean") {
         if (typeof val === "boolean") {

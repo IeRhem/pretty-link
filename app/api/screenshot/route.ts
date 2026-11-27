@@ -157,9 +157,10 @@ async function tryThumIo(
   targetUrl: string,
   viewport: "desktop" | "mobile"
 ) {
-  const dims =
-    viewport === "mobile" ? "width/390/crop/844" : "width/1280/crop/900"
-  const thumUrl = `https://image.thum.io/get/${dims}/noanimate/${targetUrl}`
+  if (viewport === "mobile") {
+    return null
+  }
+  const thumUrl = `https://image.thum.io/get/width/1280/crop/900/noanimate/${targetUrl}`
   return tryFetchRasterImage(thumUrl, 8000)
 }
 
@@ -181,8 +182,8 @@ export async function GET(request: NextRequest) {
   }
 
   const targetUrl = check.url.toString()
-  const cacheKey = `${targetUrl}|${colorScheme}|${viewport}`
-  const cached = getCachedScreenshot(cacheKey)
+  const requestedCacheKey = `${targetUrl}|${colorScheme}|${viewport}`
+  const cached = getCachedScreenshot(requestedCacheKey)
   if (cached) {
     return new Response(cached.buffer.slice(0), {
       status: 200,
@@ -190,14 +191,17 @@ export async function GET(request: NextRequest) {
         "Content-Type": cached.contentType,
         "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
         "X-Content-Type-Options": "nosniff",
+        "X-Screenshot-Theme": colorScheme,
       },
     })
   }
 
-  const captured =
-    (await tryMicrolink(targetUrl, colorScheme, viewport)) ??
-    (await tryWordPressMshots(targetUrl, viewport)) ??
-    (await tryThumIo(targetUrl, viewport))
+  const microlinkCapture = await tryMicrolink(targetUrl, colorScheme, viewport)
+  const fallbackCapture = microlinkCapture
+    ? null
+    : ((await tryWordPressMshots(targetUrl, viewport)) ??
+      (await tryThumIo(targetUrl, viewport)))
+  const captured = microlinkCapture ?? fallbackCapture
 
   if (!captured) {
     return Response.json(
@@ -206,7 +210,13 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  setCachedScreenshot(cacheKey, captured.buffer, captured.contentType)
+  const isThemedCapture = Boolean(microlinkCapture)
+  const effectiveThemeHeader = isThemedCapture ? colorScheme : "unthemed"
+  const storeCacheKey = isThemedCapture
+    ? requestedCacheKey
+    : `${targetUrl}|light|${viewport}`
+
+  setCachedScreenshot(storeCacheKey, captured.buffer, captured.contentType)
 
   return new Response(captured.buffer, {
     status: 200,
@@ -214,6 +224,7 @@ export async function GET(request: NextRequest) {
       "Content-Type": captured.contentType,
       "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
       "X-Content-Type-Options": "nosniff",
+      "X-Screenshot-Theme": effectiveThemeHeader,
     },
   })
 }

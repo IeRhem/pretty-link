@@ -15,6 +15,7 @@ import {
   ASPECT_RATIOS,
   getFrameTiltMatrix,
   resolveAspectDimensions,
+  resolveUnsplashPhotoUrl,
 } from "@/lib/presets"
 import { generateQrMatrix } from "@/lib/qr"
 import { SOCIAL_PLATFORMS } from "@/lib/social-platforms"
@@ -562,7 +563,11 @@ async function drawBackground(
   }
 
   // Image or Unsplash
-  const src = state.backgroundImageUrl
+  const src =
+    state.backgroundImageUrl ||
+    (state.backgroundType === "unsplash"
+      ? resolveUnsplashPhotoUrl(state.unsplashPhotoId)
+      : "")
   const bgImg = await loadImageSafe(src)
   if (bgImg) {
     ctx.save()
@@ -693,6 +698,162 @@ function drawContainedImage(
   ctx.drawImage(img, dx, dy, dw, dh)
 }
 
+function drawCalloutBadge(
+  ctx: CanvasRenderingContext2D,
+  state: StudioState,
+  width: number,
+  height: number
+) {
+  const hasCallout =
+    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
+  if (!hasCallout) return
+
+  const minDim = Math.min(width, height)
+  const scaleFactor = minDim / 500
+  const accentColor = resolveTabAccentColor(state)
+  const headingFont = getResolvedHeadingFont(state.fontStyle)
+  const cornerSize = Math.round(46 * scaleFactor)
+
+  const calloutLabel = state.calloutText.trim()
+  const pillH = Math.round(26 * scaleFactor)
+  const padL = Math.round(9 * scaleFactor)
+  const padR = Math.round(11 * scaleFactor)
+  const dotSize = Math.max(5, Math.round(7 * scaleFactor))
+  const gap = Math.round(6 * scaleFactor)
+  const fontSize = Math.round(11 * scaleFactor)
+  let maxPillW = Math.round(width * 0.78)
+
+  const sharesCornerWithIcon =
+    state.showCornerIcon && state.cornerIconPosition === state.calloutPosition
+  let pillY = sharesCornerWithIcon
+    ? Math.round(height * 0.055 + cornerSize + Math.round(8 * scaleFactor))
+    : Math.round(height * 0.055)
+
+  const hasHeadlineText =
+    state.showPosterHeader &&
+    Boolean(state.posterHeadline.trim() || state.posterAccentText.trim())
+  const headlineTopY = Math.round(height * 0.17)
+  const minHeadlineGap = Math.round(6 * scaleFactor)
+  const clampedHeadlineY = Math.max(
+    Math.round(4 * scaleFactor),
+    headlineTopY - pillH - minHeadlineGap
+  )
+
+  const willOverlapHeadline =
+    hasHeadlineText && pillY + pillH + minHeadlineGap > headlineTopY
+  const willSitBesideIcon =
+    willOverlapHeadline &&
+    sharesCornerWithIcon &&
+    clampedHeadlineY < Math.round(height * 0.055) + cornerSize
+
+  if (willSitBesideIcon) {
+    if (state.calloutPosition === "top-left") {
+      const startX = Math.round(
+        width * 0.075 + cornerSize + Math.round(10 * scaleFactor)
+      )
+      maxPillW = Math.max(48, Math.round(width * 0.96) - startX)
+    } else if (state.calloutPosition === "top-center") {
+      const startX = Math.round(
+        width / 2 + cornerSize / 2 + Math.round(10 * scaleFactor)
+      )
+      maxPillW = Math.max(48, Math.round(width * 0.96) - startX)
+    } else if (state.calloutPosition === "top-right") {
+      const endX = Math.round(
+        width * (1 - 0.075) - cornerSize - Math.round(10 * scaleFactor)
+      )
+      maxPillW = Math.max(48, endX - Math.round(width * 0.04))
+    }
+  }
+
+  ctx.save()
+  ctx.font = `600 ${fontSize}px ${headingFont}`
+  if ("letterSpacing" in ctx) {
+    ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.02 * fontSize).toFixed(2)}px`
+  }
+  const maxTextW = Math.max(24, maxPillW - padL - dotSize - gap - padR)
+  const renderedLabel = truncateTextWithEllipsis(ctx, calloutLabel, maxTextW)
+  const textW = ctx.measureText(renderedLabel).width
+  const pillW = Math.round(padL + dotSize + gap + textW + padR)
+
+  let pillX = Math.round(width * 0.075)
+  if (state.calloutPosition === "top-center") {
+    pillX = Math.round((width - pillW) / 2)
+  } else if (state.calloutPosition === "top-right") {
+    pillX = Math.round(width * (1 - 0.075) - pillW)
+  }
+
+  const intersectsLeftHeadline =
+    hasHeadlineText &&
+    (state.posterHeadlineAlign === "left"
+      ? state.calloutPosition === "top-left" || pillX < Math.round(width * 0.92)
+      : state.posterHeadlineAlign === "right"
+        ? state.calloutPosition === "top-right" ||
+          pillX + pillW > Math.round(width * 0.08)
+        : true)
+  if (
+    intersectsLeftHeadline &&
+    pillY + pillH + minHeadlineGap > headlineTopY
+  ) {
+    pillY = clampedHeadlineY
+    if (
+      sharesCornerWithIcon &&
+      pillY < Math.round(height * 0.055) + cornerSize
+    ) {
+      if (state.calloutPosition === "top-left") {
+        pillX = Math.round(
+          width * 0.075 + cornerSize + Math.round(10 * scaleFactor)
+        )
+      } else if (state.calloutPosition === "top-center") {
+        pillX = Math.round(
+          width / 2 + cornerSize / 2 + Math.round(10 * scaleFactor)
+        )
+      } else if (state.calloutPosition === "top-right") {
+        pillX = Math.round(
+          width * (1 - 0.075) -
+            cornerSize -
+            Math.round(10 * scaleFactor) -
+            pillW
+        )
+      }
+    }
+  }
+
+  ctx.save()
+  ctx.shadowColor = "rgba(0, 0, 0, 0.25)"
+  ctx.shadowBlur = Math.round(14 * scaleFactor)
+  ctx.shadowOffsetY = Math.round(5 * scaleFactor)
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+  ctx.fillStyle = "rgba(9, 9, 11, 0.88)"
+  ctx.fill()
+  ctx.restore()
+
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+  ctx.lineWidth = Math.max(1, scaleFactor)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"
+  ctx.stroke()
+
+  const dotCx = pillX + padL + dotSize / 2
+  const dotCy = pillY + pillH / 2
+  ctx.save()
+  ctx.shadowColor = accentColor
+  ctx.shadowBlur = Math.round(8 * scaleFactor)
+  ctx.beginPath()
+  ctx.arc(dotCx, dotCy, dotSize / 2, 0, Math.PI * 2)
+  ctx.fillStyle = accentColor
+  ctx.fill()
+  ctx.restore()
+
+  ctx.fillStyle = "#FFFFFF"
+  ctx.textAlign = "left"
+  ctx.textBaseline = "middle"
+  ctx.fillText(
+    renderedLabel,
+    pillX + padL + dotSize + gap,
+    pillY + pillH / 2 + 0.5
+  )
+  ctx.restore()
+}
+
 function drawPosterOverlays(
   ctx: CanvasRenderingContext2D,
   state: StudioState,
@@ -700,11 +861,8 @@ function drawPosterOverlays(
   height: number,
   faviconImg: HTMLImageElement | null
 ) {
-  const hasCallout =
-    Boolean(state.showCalloutBadge) && Boolean(state.calloutText?.trim())
   if (
     !state.showCornerIcon &&
-    !hasCallout &&
     !state.showPosterHeader &&
     !state.showPosterFooter
   ) {
@@ -734,117 +892,6 @@ function drawPosterOverlays(
     } else {
       drawDefaultBrandIcon(ctx, cx, cy, cornerSize, accentColor, true)
     }
-  }
-
-  if (hasCallout) {
-    const calloutLabel = state.calloutText.trim()
-    const pillH = Math.round(26 * scaleFactor)
-    const padL = Math.round(9 * scaleFactor)
-    const padR = Math.round(11 * scaleFactor)
-    const dotSize = Math.max(5, Math.round(7 * scaleFactor))
-    const gap = Math.round(6 * scaleFactor)
-    const fontSize = Math.round(11 * scaleFactor)
-    const maxPillW = Math.round(width * 0.78)
-
-    ctx.save()
-    ctx.font = `600 ${fontSize}px ${headingFont}`
-    if ("letterSpacing" in ctx) {
-      ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${(0.02 * fontSize).toFixed(2)}px`
-    }
-    const maxTextW = Math.max(24, maxPillW - padL - dotSize - gap - padR)
-    const renderedLabel = truncateTextWithEllipsis(ctx, calloutLabel, maxTextW)
-    const textW = ctx.measureText(renderedLabel).width
-    const pillW = Math.round(padL + dotSize + gap + textW + padR)
-
-    const sharesCornerWithIcon =
-      state.showCornerIcon &&
-      state.cornerIconPosition === state.calloutPosition
-    let pillY = sharesCornerWithIcon
-      ? Math.round(height * 0.055 + cornerSize + Math.round(8 * scaleFactor))
-      : Math.round(height * 0.055)
-    let pillX = Math.round(width * 0.075)
-    if (state.calloutPosition === "top-center") {
-      pillX = Math.round((width - pillW) / 2)
-    } else if (state.calloutPosition === "top-right") {
-      pillX = Math.round(width * (1 - 0.075) - pillW)
-    }
-
-    const hasHeadlineText =
-      state.showPosterHeader &&
-      Boolean(state.posterHeadline.trim() || state.posterAccentText.trim())
-    const headlineTopY = Math.round(height * 0.17)
-    const minHeadlineGap = Math.round(6 * scaleFactor)
-    const intersectsLeftHeadline =
-      hasHeadlineText &&
-      (state.posterHeadlineAlign === "left"
-        ? state.calloutPosition === "top-left" ||
-          pillX < Math.round(width * 0.92)
-        : state.posterHeadlineAlign === "right"
-          ? state.calloutPosition === "top-right" ||
-            pillX + pillW > Math.round(width * 0.08)
-          : true)
-    if (
-      intersectsLeftHeadline &&
-      pillY + pillH + minHeadlineGap > headlineTopY
-    ) {
-      pillY = Math.max(
-        Math.round(4 * scaleFactor),
-        headlineTopY - pillH - minHeadlineGap
-      )
-      if (
-        sharesCornerWithIcon &&
-        pillY < Math.round(height * 0.055) + cornerSize
-      ) {
-        if (state.calloutPosition === "top-left") {
-          pillX = Math.round(
-            width * 0.075 + cornerSize + Math.round(10 * scaleFactor)
-          )
-        } else if (state.calloutPosition === "top-center") {
-          pillX = Math.min(
-            Math.round(width * (1 - 0.04) - pillW),
-            Math.round(width / 2 + cornerSize / 2 + Math.round(10 * scaleFactor))
-          )
-        } else if (state.calloutPosition === "top-right") {
-          pillX = Math.round(
-            width * (1 - 0.075) -
-              cornerSize -
-              Math.round(10 * scaleFactor) -
-              pillW
-          )
-        }
-      }
-    }
-
-    ctx.save()
-    ctx.shadowColor = "rgba(0, 0, 0, 0.25)"
-    ctx.shadowBlur = Math.round(14 * scaleFactor)
-    ctx.shadowOffsetY = Math.round(5 * scaleFactor)
-    roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
-    ctx.fillStyle = "rgba(9, 9, 11, 0.88)"
-    ctx.fill()
-    ctx.restore()
-
-    roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2)
-    ctx.lineWidth = Math.max(1, scaleFactor)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"
-    ctx.stroke()
-
-    const dotCx = pillX + padL + dotSize / 2
-    const dotCy = pillY + pillH / 2
-    ctx.save()
-    ctx.shadowColor = accentColor
-    ctx.shadowBlur = Math.round(8 * scaleFactor)
-    ctx.beginPath()
-    ctx.arc(dotCx, dotCy, dotSize / 2, 0, Math.PI * 2)
-    ctx.fillStyle = accentColor
-    ctx.fill()
-    ctx.restore()
-
-    ctx.fillStyle = "#FFFFFF"
-    ctx.textAlign = "left"
-    ctx.textBaseline = "middle"
-    ctx.fillText(renderedLabel, pillX + padL + dotSize + gap, pillY + pillH / 2 + 0.5)
-    ctx.restore()
   }
 
   if (state.showPosterHeader) {
@@ -3139,6 +3186,7 @@ export async function renderStudioToCanvas(
   }
   ctx.restore()
 
+  drawCalloutBadge(ctx, state, logicalW, logicalH)
   drawSpotlightOverlay(ctx, state, logicalW, logicalH)
 
   ctx.restore()

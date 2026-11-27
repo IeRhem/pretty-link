@@ -180,7 +180,6 @@ export function PreviewStage({
         "posterAccentText",
         "posterFooterTitle",
         "posterFooterSubtitle",
-        "calloutText",
         "customMobileScreenshotUrl",
         "codeFilename",
         "codeContent",
@@ -196,14 +195,29 @@ export function PreviewStage({
     () =>
       [
         "bgPattern",
+        "bgPatternOpacity",
+        "bgBlur",
+        "bgDim",
+        "noiseOverlay",
         "borderStyle",
+        "frameScale",
+        "frameOffsetX",
+        "frameOffsetY",
+        "frameShadow",
         "frameTilt",
         "showSpotlight",
-        "showCornerIcon",
-        "showPosterHeader",
-        "showPosterFooter",
-        "showCalloutBadge",
+        "showNavButtons",
         "webShowQr",
+        "tabAccentColor",
+        "showCornerIcon",
+        "cornerIconPosition",
+        "showPosterHeader",
+        "posterHeadlineAlign",
+        "posterHeadlineSize",
+        "showPosterFooter",
+        "fontStyle",
+        "showCalloutBadge",
+        "calloutPosition",
       ] as const,
     []
   )
@@ -216,6 +230,10 @@ export function PreviewStage({
       Object.keys(patch) as Array<keyof StudioState>
     ).every((key) => {
       if (NON_STYLE_TEMPLATE_KEYS.has(key)) return true
+      if (key === "calloutText") {
+        if (options?.isQuickTemplate) return true
+        if (!state.showCalloutBadge && !patch.showCalloutBadge) return true
+      }
       const expected = patch[key]
       if (expected === undefined) return true
       if (

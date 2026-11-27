@@ -490,8 +490,13 @@ export function PosterOverlays({
               paddingRight: `${Math.round(11 * scaleFactor)}px`,
               gap: `${Math.round(6 * scaleFactor)}px`,
               fontFamily: headingFontFamily,
+              ...(shiftBesideCornerIcon && state.calloutPosition === "top-center"
+                ? {
+                    maxWidth: `calc(46% - ${Math.round(cornerSize / 2 + 10 * scaleFactor)}px)`,
+                  }
+                : {}),
             }}
-            className="absolute z-20 flex max-w-[78%] items-center rounded-full bg-zinc-950/88 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-md"
+            className="absolute z-30 flex max-w-[78%] items-center rounded-full bg-zinc-950/88 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-md"
           >
             <span
               style={{
@@ -620,7 +625,9 @@ export function WebMockupCard({
 }) {
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
   const [failedUrls, setFailedUrls] = React.useState<string[]>([])
-  const [iframeLoadedUrl, setIframeLoadedUrl] = React.useState<string | null>(null)
+  const [loadedIframeToken, setLoadedIframeToken] = React.useState<{
+    key: string
+  } | null>(null)
   const viewportRef = React.useRef<HTMLDivElement>(null)
   const [viewportSize, setViewportSize] = React.useState({ width: 440, height: 320 })
   const displayUrl = formatDisplayUrl(state.url)
@@ -687,8 +694,21 @@ export function WebMockupCard({
   )
 
   const activeImage = candidates.find((src) => !failedUrls.includes(src)) ?? ""
+  const activeMobileImage =
+    (themedMobileScreenshotUrl &&
+    !failedUrls.includes(themedMobileScreenshotUrl)
+      ? themedMobileScreenshotUrl
+      : "") || activeImage
   const imageReady = Boolean(activeImage) && loadedSrc === activeImage
-  const iframeReady = Boolean(liveIframeUrl) && iframeLoadedUrl === liveIframeUrl
+  const currentIframeKey = liveIframeUrl
+    ? `${liveIframeUrl}:${previewGeneration}:${isDarkChrome ? "dark" : "light"}`
+    : ""
+  const iframeInstanceToken = React.useMemo(
+    () => ({ key: currentIframeKey }),
+    [currentIframeKey]
+  )
+  const iframeReady =
+    Boolean(currentIframeKey) && loadedIframeToken === iframeInstanceToken
   const showLoadingHint =
     isFetching || (Boolean(activeImage) && !imageReady && !iframeReady)
 
@@ -1491,12 +1511,12 @@ export function WebMockupCard({
 
         {liveIframeUrl && !state.customScreenshotUrl && (
           <iframe
-            key={`${liveIframeUrl}:${isDarkChrome ? "dark" : "light"}`}
+            key={currentIframeKey}
             src={liveIframeUrl}
             title={`Live preview of ${displayUrl}`}
             sandbox="allow-scripts allow-same-origin"
             tabIndex={-1}
-            onLoad={() => setIframeLoadedUrl(liveIframeUrl)}
+            onLoad={() => setLoadedIframeToken(iframeInstanceToken)}
             style={{
               width: "1280px",
               height: `${iframeHeight}px`,
@@ -1612,21 +1632,12 @@ export function WebMockupCard({
             </span>
           </div>
 
-          {(themedMobileScreenshotUrl || activeImage) && (
+          {activeMobileImage && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={
-                themedMobileScreenshotUrl &&
-                !failedUrls.includes(themedMobileScreenshotUrl)
-                  ? themedMobileScreenshotUrl
-                  : activeImage
-              }
+              src={activeMobileImage}
               alt={`Mobile preview of ${displayUrl}`}
-              onError={() => {
-                if (themedMobileScreenshotUrl) {
-                  markFailed(themedMobileScreenshotUrl)
-                }
-              }}
+              onError={() => markFailed(activeMobileImage)}
               className="absolute inset-0 z-10 size-full object-cover object-top"
             />
           )}

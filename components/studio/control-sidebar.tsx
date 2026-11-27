@@ -107,6 +107,8 @@ export function ControlSidebar({
   onOpenExport,
   onQuickCopy,
   getUploadResetToken,
+  getBackgroundResetToken,
+  getAssetMutationToken,
   onNotify,
   onCloseMobile,
   closeButtonRef,
@@ -119,6 +121,8 @@ export function ControlSidebar({
   onOpenExport: () => void
   onQuickCopy: () => void
   getUploadResetToken?: () => number
+  getBackgroundResetToken?: () => number
+  getAssetMutationToken?: (field: UploadField) => number
   onNotify?: (message: string) => void
   onCloseMobile?: () => void
   closeButtonRef?: React.RefObject<HTMLButtonElement | null>
@@ -144,6 +148,8 @@ export function ControlSidebar({
   const calloutBadgeLabelId = React.useId()
   const spotlightLabelId = React.useId()
   const codeLineNumbersLabelId = React.useId()
+  const codeSnippetTextareaId = React.useId()
+  const changelogHighlightsTextareaId = React.useId()
   const headlineTextLabelId = React.useId()
   const footerSignatureLabelId = React.useId()
 
@@ -154,11 +160,13 @@ export function ControlSidebar({
     if (!file || !file.type.startsWith("image/")) return
     const token = ++uploadRequestTokensRef.current[field]
     const resetToken = getUploadResetToken?.() ?? 0
+    const startMutationToken = getAssetMutationToken?.(field) ?? 0
     const reader = new FileReader()
     reader.onload = () => {
       if (
         uploadRequestTokensRef.current[field] !== token ||
-        (getUploadResetToken?.() ?? 0) !== resetToken
+        (getUploadResetToken?.() ?? 0) !== resetToken ||
+        (getAssetMutationToken?.(field) ?? 0) !== startMutationToken
       ) {
         return
       }
@@ -276,7 +284,9 @@ export function ControlSidebar({
             <BackgroundControls
               state={state}
               onChange={onChange}
-              getUploadResetToken={getUploadResetToken}
+              getUploadResetToken={
+                getBackgroundResetToken ?? getUploadResetToken
+              }
               onNotify={onNotify}
             />
 
@@ -670,24 +680,25 @@ export function ControlSidebar({
                         type="file"
                         accept="image/*"
                         className="hidden"
-                        onChange={(e) =>
-                          handleDataUrlUpload(
-                            e.target.files?.[0],
-                            "customScreenshotUrl"
-                          )
-                        }
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          e.target.value = ""
+                          handleDataUrlUpload(file, "customScreenshotUrl")
+                        }}
                       />
                       <input
                         ref={mobileScreenshotInputRef}
                         type="file"
                         accept="image/*"
                         className="hidden"
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          e.target.value = ""
                           handleDataUrlUpload(
-                            e.target.files?.[0],
+                            file,
                             "customMobileScreenshotUrl"
                           )
-                        }
+                        }}
                       />
                       <div className="space-y-1.5">
                         <div className="flex gap-1.5">
@@ -1129,10 +1140,14 @@ export function ControlSidebar({
                       </div>
 
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-muted-foreground">
+                        <Label
+                          htmlFor={codeSnippetTextareaId}
+                          className="text-[11px] text-muted-foreground"
+                        >
                           Code Snippet
                         </Label>
                         <Textarea
+                          id={codeSnippetTextareaId}
                           value={state.codeContent}
                           onChange={(e) =>
                             onChange({ codeContent: e.target.value })
@@ -1204,10 +1219,14 @@ export function ControlSidebar({
                       </div>
 
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-muted-foreground">
+                        <Label
+                          htmlFor={changelogHighlightsTextareaId}
+                          className="text-[11px] text-muted-foreground"
+                        >
                           Highlights (prefix + New, * Improved, ✓ Fixed)
                         </Label>
                         <Textarea
+                          id={changelogHighlightsTextareaId}
                           value={state.changelogItems}
                           onChange={(e) =>
                             onChange({ changelogItems: e.target.value })
@@ -1436,7 +1455,11 @@ export function ControlSidebar({
                             )
                           })}
                         </div>
-                        <div className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70">
+                        <div
+                          role="group"
+                          aria-label="Callout badge position"
+                          className="grid grid-cols-3 gap-1 rounded-xl bg-background/50 p-1 ring-1 ring-border/70"
+                        >
                           {(
                             [
                               { id: "top-left", label: "Left" },
@@ -1450,6 +1473,7 @@ export function ControlSidebar({
                             <button
                               key={opt.id}
                               type="button"
+                              aria-pressed={state.calloutPosition === opt.id}
                               onClick={() =>
                                 onChange({ calloutPosition: opt.id })
                               }

@@ -193,6 +193,7 @@ export function BackgroundControls({
   const hasBrandSource = hasEligibleBrandSource(state)
   const brandContextKey = [
     state.mode,
+    state.webLayout,
     state.url.trim(),
     state.backgroundType,
     state.colorFillMode,
@@ -201,6 +202,7 @@ export function BackgroundControls({
     state.gradientVia,
     state.gradientTo,
     state.solidColor,
+    state.tabAccentColor,
     state.backgroundImageUrl,
     state.unsplashPhotoId,
     state.metadata?.fetchedAt ?? "",
@@ -247,6 +249,7 @@ export function BackgroundControls({
         gradientTo: palette.gradientTo,
         solidColor: palette.solidColor,
         tabAccentColor: palette.tabAccentColor,
+        bgDim: 20,
       })
     } finally {
       setMatchingRequest((prev) =>
@@ -321,7 +324,27 @@ export function BackgroundControls({
             <button
               key={opt.id}
               type="button"
-              onClick={() => onChange({ backgroundType: opt.id })}
+              onClick={() => {
+                if (
+                  opt.id === "unsplash" &&
+                  !state.unsplashPhotoId &&
+                  (!state.backgroundImageUrl ||
+                    state.backgroundImageUrl.startsWith("data:"))
+                ) {
+                  const firstPhoto = CURATED_UNSPLASH_PHOTOS[0]
+                  if (firstPhoto) {
+                    onChange({
+                      backgroundType: "unsplash",
+                      backgroundImageUrl:
+                        firstPhoto.exportUrl ?? firstPhoto.fullUrl,
+                      unsplashPhotoId: firstPhoto.id,
+                      unsplashPhotographer: firstPhoto.photographer,
+                    })
+                    return
+                  }
+                }
+                onChange({ backgroundType: opt.id })
+              }}
               className={cn(
                 "flex flex-col items-center justify-center gap-1 rounded-lg py-2 text-[11px] font-medium transition-all",
                 active
@@ -524,7 +547,7 @@ export function BackgroundControls({
             ) : (
               <IconColorPicker className="size-3.5 text-primary" />
             )}
-            <span>Complement Website Colors</span>
+            <span>Match brand color</span>
           </Button>
         </div>
       )}

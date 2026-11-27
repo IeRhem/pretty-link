@@ -7,6 +7,7 @@ import { PosterOverlays, WebMockupCard } from "@/components/studio/web-mockup-ca
 import {
   getFrameTiltCssTransform,
   resolveAspectDimensions,
+  resolveUnsplashPhotoUrl,
 } from "@/lib/presets"
 import type { BackgroundPattern, StudioState } from "@/lib/studio-types"
 import { cn } from "@/lib/utils"
@@ -185,7 +186,18 @@ export function MockupFrame({
     initialX: number
     initialY: number
     committedFirstStep: boolean
+    previewGeneration: number
   } | null>(null)
+
+  React.useEffect(() => {
+    dragSessionRef.current = null
+    const rafId = requestAnimationFrame(() => {
+      setDragVisual((prev) =>
+        prev.active ? { ...prev, active: false } : prev
+      )
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [previewGeneration])
 
   React.useEffect(() => {
     const el = containerRef.current
@@ -275,22 +287,31 @@ export function MockupFrame({
           {/* Image / Unsplash Background Layer */}
           {(state.backgroundType === "image" ||
             state.backgroundType === "unsplash") &&
-            state.backgroundImageUrl && (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={state.backgroundImageUrl}
-                  alt="Canvas background"
-                  style={{
-                    filter:
-                      state.bgBlur > 0
-                        ? `blur(${state.bgBlur}px) scale(1.06)`
-                        : undefined,
-                  }}
-                  className="pointer-events-none absolute inset-0 size-full object-cover"
-                />
-              </>
-            )}
+            (() => {
+              const resolvedBgImage =
+                state.backgroundImageUrl ||
+                (state.backgroundType === "unsplash"
+                  ? resolveUnsplashPhotoUrl(state.unsplashPhotoId)
+                  : "")
+              if (!resolvedBgImage) return null
+              return (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={resolvedBgImage}
+                    alt="Canvas background"
+                    style={{
+                      filter:
+                        state.bgBlur > 0
+                          ? `blur(${state.bgBlur}px)`
+                          : undefined,
+                      transform: state.bgBlur > 0 ? "scale(1.06)" : undefined,
+                    }}
+                    className="pointer-events-none absolute inset-0 size-full object-cover"
+                  />
+                </>
+              )
+            })()}
 
           {/* Dim overlay for color, image, and unsplash backgrounds */}
           {state.backgroundType !== "none" && state.bgDim > 0 && (
@@ -335,7 +356,8 @@ export function MockupFrame({
           {/* Interactive Draggable & 3D-Tilted Content Layer */}
           <div
             onPointerDown={(e) => {
-              if (!onChange || e.button !== 0) return
+              if (!onChange || e.button !== 0 || dragSessionRef.current !== null)
+                return
               e.currentTarget.setPointerCapture(e.pointerId)
               dragSessionRef.current = {
                 pointerId: e.pointerId,
@@ -345,6 +367,7 @@ export function MockupFrame({
                 initialX: state.frameOffsetX ?? 0,
                 initialY: state.frameOffsetY ?? 0,
                 committedFirstStep: false,
+                previewGeneration,
               }
               setDragVisual({
                 active: true,
@@ -361,6 +384,13 @@ export function MockupFrame({
                 session.pointerId !== e.pointerId ||
                 session.kind !== "frame"
               ) {
+                return
+              }
+              if (session.previewGeneration !== previewGeneration) {
+                dragSessionRef.current = null
+                setDragVisual((prev) =>
+                  prev.active ? { ...prev, active: false } : prev
+                )
                 return
               }
               const dx = e.clientX - session.startX
@@ -416,11 +446,21 @@ export function MockupFrame({
                 )
               }
             }}
-            onPointerCancel={() => {
-              dragSessionRef.current = null
-              setDragVisual((prev) =>
-                prev.active ? { ...prev, active: false } : prev
-              )
+            onPointerCancel={(e) => {
+              if (dragSessionRef.current?.pointerId === e.pointerId) {
+                dragSessionRef.current = null
+                setDragVisual((prev) =>
+                  prev.active ? { ...prev, active: false } : prev
+                )
+              }
+            }}
+            onLostPointerCapture={(e) => {
+              if (dragSessionRef.current?.pointerId === e.pointerId) {
+                dragSessionRef.current = null
+                setDragVisual((prev) =>
+                  prev.active ? { ...prev, active: false } : prev
+                )
+              }
             }}
             onDoubleClick={() => {
               if (!onChange) return
@@ -477,7 +517,12 @@ export function MockupFrame({
             >
               <div
                 onPointerDown={(e) => {
-                  if (!onChange || e.button !== 0) return
+                  if (
+                    !onChange ||
+                    e.button !== 0 ||
+                    dragSessionRef.current !== null
+                  )
+                    return
                   e.stopPropagation()
                   e.currentTarget.setPointerCapture(e.pointerId)
                   dragSessionRef.current = {
@@ -488,6 +533,7 @@ export function MockupFrame({
                     initialX: state.spotlightX ?? 50,
                     initialY: state.spotlightY ?? 50,
                     committedFirstStep: false,
+                    previewGeneration,
                   }
                   setDragVisual({
                     active: true,
@@ -504,6 +550,13 @@ export function MockupFrame({
                     session.pointerId !== e.pointerId ||
                     session.kind !== "spotlight"
                   ) {
+                    return
+                  }
+                  if (session.previewGeneration !== previewGeneration) {
+                    dragSessionRef.current = null
+                    setDragVisual((prev) =>
+                      prev.active ? { ...prev, active: false } : prev
+                    )
                     return
                   }
                   e.stopPropagation()
@@ -543,6 +596,23 @@ export function MockupFrame({
                 onPointerUp={(e) => {
                   if (dragSessionRef.current?.pointerId === e.pointerId) {
                     e.stopPropagation()
+                    dragSessionRef.current = null
+                    setDragVisual((prev) =>
+                      prev.active ? { ...prev, active: false } : prev
+                    )
+                  }
+                }}
+                onPointerCancel={(e) => {
+                  if (dragSessionRef.current?.pointerId === e.pointerId) {
+                    e.stopPropagation()
+                    dragSessionRef.current = null
+                    setDragVisual((prev) =>
+                      prev.active ? { ...prev, active: false } : prev
+                    )
+                  }
+                }}
+                onLostPointerCapture={(e) => {
+                  if (dragSessionRef.current?.pointerId === e.pointerId) {
                     dragSessionRef.current = null
                     setDragVisual((prev) =>
                       prev.active ? { ...prev, active: false } : prev

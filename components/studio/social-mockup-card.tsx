@@ -23,7 +23,7 @@ export function parseSocialStats(
   if (!metrics || !metrics.trim()) return []
 
   const parts = metrics
-    .split(/[·|,]/)
+    .split(/[·|]|(?<!\d),|,(?!\d)/)
     .map((s) => s.trim())
     .filter(Boolean)
 

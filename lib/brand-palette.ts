@@ -241,9 +241,9 @@ export function buildBrandPaletteFromRgb(
   if (isMonochromeSite) {
     // Monochrome / neutral site: produce a dim, understated slate-charcoal complementary backdrop
     const baseHue = 222
-    const fromRgb = hslToRgb(baseHue, 0.14, 0.22)
-    const viaRgb = hslToRgb(baseHue + 12, 0.16, 0.17)
-    const toRgb = hslToRgb(baseHue + 24, 0.18, 0.13)
+    const fromRgb = hslToRgb(baseHue, 0.16, 0.24)
+    const viaRgb = hslToRgb(baseHue + 12, 0.18, 0.2)
+    const toRgb = hslToRgb(baseHue + 24, 0.2, 0.16)
     const accentRgb = hslToRgb(baseHue, 0.28, 0.42)
     return {
       gradientFrom: rgbToHex(fromRgb[0], fromRgb[1], fromRgb[2]),
@@ -274,16 +274,16 @@ export function buildBrandPaletteFromRgb(
     compHueEnd = (h2 + 180) % 360
   }
 
-  // Keep saturation subdued (0.22 - 0.34) and lightness dim (0.14 - 0.24)
-  // so the backdrop feels atmospheric and never overpowers the website card
-  const mutedSat = Math.max(0.22, Math.min(0.34, s1 * 0.48))
-  const dimLightStart = Math.max(0.2, Math.min(0.25, 0.22 + (l1 - 0.5) * 0.04))
-  const dimLightMid = Math.max(0.16, dimLightStart - 0.04)
-  const dimLightEnd = Math.max(0.12, dimLightStart - 0.08)
+  // Keep saturation balanced (0.28 - 0.42) and mid-tone lightness (0.26 - 0.34)
+  // so the user can adjust the Dim slider up or down to make it brighter or darker
+  const mutedSat = Math.max(0.28, Math.min(0.42, s1 * 0.56))
+  const lightStart = Math.max(0.3, Math.min(0.36, 0.32 + (l1 - 0.5) * 0.04))
+  const lightMid = Math.max(0.26, lightStart - 0.04)
+  const lightEnd = Math.max(0.22, lightStart - 0.08)
 
-  const compStartRgb = hslToRgb(compHueStart, mutedSat, dimLightStart)
-  const compMidRgb = hslToRgb(compHueCenter, mutedSat * 0.95, dimLightMid)
-  const compEndRgb = hslToRgb(compHueEnd, mutedSat * 1.05, dimLightEnd)
+  const compStartRgb = hslToRgb(compHueStart, mutedSat, lightStart)
+  const compMidRgb = hslToRgb(compHueCenter, mutedSat * 0.95, lightMid)
+  const compEndRgb = hslToRgb(compHueEnd, mutedSat * 1.05, lightEnd)
 
   // Subtle, readable brand-derived accent for the browser URL pill
   const tabAccentRgb = hslToRgb(
@@ -405,6 +405,17 @@ export function hasEligibleBrandSource(state: StudioState): boolean {
   return getModeBrandImageCandidates(state).some((url) => Boolean(url?.trim()))
 }
 
+function hasChromaticPixels(
+  samples: ReadonlyArray< readonly [number, number, number]>
+): boolean {
+  for (const [r, g, b] of samples) {
+    const [, s, l] = rgbToHsl(r, g, b)
+    if (l < 0.07 || l > 0.94) continue
+    if (s >= 0.14) return true
+  }
+  return false
+}
+
 export async function extractBrandPaletteFromState(
   state: StudioState
 ): Promise<BrandPaletteResult | null> {
@@ -420,13 +431,25 @@ export async function extractBrandPaletteFromState(
     })
     .filter((v): v is string => Boolean(v))
 
+  let fallbackNeutralSamples: Array<[number, number, number]> | null = null
+
   for (const candidate of candidates) {
     const samples = await sampleImageRgbPixels(candidate)
     if (samples && samples.length > 0) {
-      const palette = buildBrandPaletteFromRgb(samples)
-      if (palette) return palette
+      if (hasChromaticPixels(samples)) {
+        const palette = buildBrandPaletteFromRgb(
+          samples,
+          state.metadata?.themeColor
+        )
+        if (palette) return palette
+      } else if (!fallbackNeutralSamples) {
+        fallbackNeutralSamples = samples
+      }
     }
   }
 
-  return buildBrandPaletteFromRgb([], state.metadata?.themeColor)
+  return buildBrandPaletteFromRgb(
+    fallbackNeutralSamples ?? [],
+    state.metadata?.themeColor
+  )
 }
