@@ -18,9 +18,16 @@ const SCREENSHOT_CACHE_TTL_MS = 15 * 60 * 1000
 const SCREENSHOT_CACHE_MAX = 40
 const MIN_SCREENSHOT_BYTES = 2500
 
+type EffectiveScreenshotTheme = "light" | "dark" | "unthemed"
+
 const screenshotCache = new Map<
   string,
-  { buffer: ArrayBuffer; contentType: string; expiresAt: number }
+  {
+    buffer: ArrayBuffer
+    contentType: string
+    expiresAt: number
+    effectiveTheme: EffectiveScreenshotTheme
+  }
 >()
 
 function getCachedScreenshot(key: string) {
@@ -36,7 +43,8 @@ function getCachedScreenshot(key: string) {
 function setCachedScreenshot(
   key: string,
   buffer: ArrayBuffer,
-  contentType: string
+  contentType: string,
+  effectiveTheme: EffectiveScreenshotTheme
 ) {
   if (buffer.byteLength > CACHE_MAX_BYTES) return
   if (screenshotCache.size >= SCREENSHOT_CACHE_MAX) {
@@ -47,6 +55,7 @@ function setCachedScreenshot(
     buffer,
     contentType,
     expiresAt: Date.now() + SCREENSHOT_CACHE_TTL_MS,
+    effectiveTheme,
   })
 }
 
@@ -183,6 +192,7 @@ export async function GET(request: NextRequest) {
 
   const targetUrl = check.url.toString()
   const requestedCacheKey = `${targetUrl}|${colorScheme}|${viewport}`
+  const unthemedCacheKey = `${targetUrl}|unthemed|${viewport}`
   const cached = getCachedScreenshot(requestedCacheKey)
   if (cached) {
     return new Response(cached.buffer.slice(0), {
@@ -191,12 +201,27 @@ export async function GET(request: NextRequest) {
         "Content-Type": cached.contentType,
         "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
         "X-Content-Type-Options": "nosniff",
-        "X-Screenshot-Theme": colorScheme,
+        "X-Screenshot-Theme": cached.effectiveTheme,
       },
     })
   }
 
   const microlinkCapture = await tryMicrolink(targetUrl, colorScheme, viewport)
+  if (!microlinkCapture) {
+    const cachedUnthemed = getCachedScreenshot(unthemedCacheKey)
+    if (cachedUnthemed) {
+      return new Response(cachedUnthemed.buffer.slice(0), {
+        status: 200,
+        headers: {
+          "Content-Type": cachedUnthemed.contentType,
+          "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+          "X-Content-Type-Options": "nosniff",
+          "X-Screenshot-Theme": cachedUnthemed.effectiveTheme,
+        },
+      })
+    }
+  }
+
   const fallbackCapture = microlinkCapture
     ? null
     : ((await tryWordPressMshots(targetUrl, viewport)) ??
@@ -211,12 +236,17 @@ export async function GET(request: NextRequest) {
   }
 
   const isThemedCapture = Boolean(microlinkCapture)
-  const effectiveThemeHeader = isThemedCapture ? colorScheme : "unthemed"
-  const storeCacheKey = isThemedCapture
-    ? requestedCacheKey
-    : `${targetUrl}|light|${viewport}`
+  const effectiveThemeHeader: EffectiveScreenshotTheme = isThemedCapture
+    ? colorScheme
+    : "unthemed"
+  const storeCacheKey = isThemedCapture ? requestedCacheKey : unthemedCacheKey
 
-  setCachedScreenshot(storeCacheKey, captured.buffer, captured.contentType)
+  setCachedScreenshot(
+    storeCacheKey,
+    captured.buffer,
+    captured.contentType,
+    effectiveThemeHeader
+  )
 
   return new Response(captured.buffer, {
     status: 200,

@@ -73,16 +73,32 @@ function estimateSnapshotImageBytes(snapshot: StudioState): number {
 
 function enforceCombinedHistoryLimits(
   past: StudioState[],
-  future: StudioState[]
+  future: StudioState[],
+  options?: { incomingPast?: StudioState; incomingFuture?: StudioState }
 ): { past: StudioState[]; future: StudioState[] } {
-  const nextPast =
-    past.length > MAX_HISTORY_SNAPSHOTS
-      ? past.slice(past.length - MAX_HISTORY_SNAPSHOTS)
+  const basePast =
+    options?.incomingPast !== undefined
+      ? estimateSnapshotImageBytes(options.incomingPast) <=
+        MAX_HISTORY_IMAGE_BYTES
+        ? [...past, options.incomingPast]
+        : [...past]
       : [...past]
-  const nextFuture =
-    future.length > MAX_HISTORY_SNAPSHOTS
-      ? future.slice(0, MAX_HISTORY_SNAPSHOTS)
+  const baseFuture =
+    options?.incomingFuture !== undefined
+      ? estimateSnapshotImageBytes(options.incomingFuture) <=
+        MAX_HISTORY_IMAGE_BYTES
+        ? [options.incomingFuture, ...future]
+        : [...future]
       : [...future]
+
+  const nextPast =
+    basePast.length > MAX_HISTORY_SNAPSHOTS
+      ? basePast.slice(basePast.length - MAX_HISTORY_SNAPSHOTS)
+      : basePast
+  const nextFuture =
+    baseFuture.length > MAX_HISTORY_SNAPSHOTS
+      ? baseFuture.slice(0, MAX_HISTORY_SNAPSHOTS)
+      : baseFuture
 
   let totalImageBytes =
     nextPast.reduce((sum, item) => sum + estimateSnapshotImageBytes(item), 0) +
@@ -166,6 +182,9 @@ export function StudioWorkspace() {
     avatar: false,
     cover: false,
   })
+  const snapshotSocialOverridesRef = React.useRef(
+    new WeakMap<StudioState, { avatar: boolean; cover: boolean }>()
+  )
   const drawerRef = React.useRef<HTMLDivElement>(null)
   const stageWrapperRef = React.useRef<HTMLDivElement>(null)
   const menuTriggerRef = React.useRef<HTMLButtonElement>(null)
@@ -274,12 +293,17 @@ export function StudioWorkspace() {
       // A forced step closes the coalescing window so the next ordinary edit starts its own step
       lastEditTimeRef.current = forceNewStep ? 0 : now
       lastEditKeyRef.current = forceNewStep ? "" : editKey
+      snapshotSocialOverridesRef.current.set(snapshot, {
+        ...userOverrodeSocialAssetsRef.current,
+      })
 
       setHistory((prev) => {
         if (shouldCoalesce && prev.past.length > 0) {
           return prev.future.length > 0 ? { ...prev, future: [] } : prev
         }
-        return enforceCombinedHistoryLimits([...prev.past, snapshot], [])
+        return enforceCombinedHistoryLimits(prev.past, [], {
+          incomingPast: snapshot,
+        })
       })
     },
     []
@@ -325,6 +349,14 @@ export function StudioWorkspace() {
       patch: Partial<StudioState>,
       options?: { forceHistoryStep?: boolean; skipHistory?: boolean }
     ) => {
+      if (!options?.skipHistory) {
+        const editKey = Object.keys(patch).sort().join(",")
+        recordUndoSnapshot(
+          stateRef.current,
+          options?.forceHistoryStep ?? false,
+          editKey
+        )
+      }
       if (patch.customFaviconUrl !== undefined) {
         assetMutationTokenRef.current.favicon += 1
         setPreviewGeneration((g) => g + 1)
@@ -337,15 +369,11 @@ export function StudioWorkspace() {
       }
       if (patch.socialAvatarUrl !== undefined) {
         assetMutationTokenRef.current.avatar += 1
-        userOverrodeSocialAssetsRef.current.avatar = Boolean(
-          patch.socialAvatarUrl
-        )
+        userOverrodeSocialAssetsRef.current.avatar = true
       }
       if (patch.socialCoverUrl !== undefined) {
         assetMutationTokenRef.current.cover += 1
-        userOverrodeSocialAssetsRef.current.cover = Boolean(
-          patch.socialCoverUrl
-        )
+        userOverrodeSocialAssetsRef.current.cover = true
       }
       if (
         patch.backgroundType !== undefined ||
@@ -381,7 +409,8 @@ export function StudioWorkspace() {
         patch.gradientVia !== undefined ||
         patch.gradientTo !== undefined ||
         patch.solidColor !== undefined ||
-        patch.tabAccentColor !== undefined
+        patch.tabAccentColor !== undefined ||
+        patch.bgDim !== undefined
       ) {
         brandPaletteSessionRef.current += 1
       }
@@ -389,6 +418,15 @@ export function StudioWorkspace() {
         if (patch.url.trim() !== currentUrlRef.current.trim()) {
           urlRevisionRef.current += 1
           brandPaletteSessionRef.current += 1
+          if (patch.customScreenshotUrl === undefined) {
+            assetMutationTokenRef.current.screenshot += 1
+          }
+          if (patch.customMobileScreenshotUrl === undefined) {
+            assetMutationTokenRef.current.mobileScreenshot += 1
+          }
+          if (patch.customFaviconUrl === undefined) {
+            assetMutationTokenRef.current.favicon += 1
+          }
           if (patch.socialAvatarUrl === undefined) {
             userOverrodeSocialAssetsRef.current.avatar = false
             assetMutationTokenRef.current.avatar += 1
@@ -403,14 +441,6 @@ export function StudioWorkspace() {
           setIsFetching(false)
         }
         currentUrlRef.current = patch.url
-      }
-      if (!options?.skipHistory) {
-        const editKey = Object.keys(patch).sort().join(",")
-        recordUndoSnapshot(
-          stateRef.current,
-          options?.forceHistoryStep ?? false,
-          editKey
-        )
       }
       setState((prev) => {
         const next = { ...prev, ...patch }
@@ -529,14 +559,29 @@ export function StudioWorkspace() {
         targetSnapshot.socialMetrics === DEFAULT_STUDIO_STATE.socialMetrics ||
         (oldMeta !== null &&
           targetSnapshot.socialMetrics === (oldMeta.metrics ?? ""))
+      const snapshotOverrides =
+        snapshotSocialOverridesRef.current.get(targetSnapshot)
+      const avatarWasOverridden =
+        snapshotOverrides?.avatar ??
+        (oldMeta !== null
+          ? targetSnapshot.socialAvatarUrl !== (oldMeta.avatarUrl ?? "")
+          : Boolean(targetSnapshot.socialAvatarUrl))
+      const coverWasOverridden =
+        snapshotOverrides?.cover ??
+        (oldMeta !== null
+          ? targetSnapshot.socialCoverUrl !== (oldMeta.coverUrl ?? "")
+          : Boolean(targetSnapshot.socialCoverUrl))
+
       const isFetchedOrEmptyAvatar =
-        !targetSnapshot.socialAvatarUrl ||
-        (oldMeta !== null &&
-          targetSnapshot.socialAvatarUrl === (oldMeta.avatarUrl ?? ""))
+        !avatarWasOverridden &&
+        (oldMeta === null
+          ? !targetSnapshot.socialAvatarUrl
+          : targetSnapshot.socialAvatarUrl === (oldMeta.avatarUrl ?? ""))
       const isFetchedOrEmptyCover =
-        !targetSnapshot.socialCoverUrl ||
-        (oldMeta !== null &&
-          targetSnapshot.socialCoverUrl === (oldMeta.coverUrl ?? ""))
+        !coverWasOverridden &&
+        (oldMeta === null
+          ? !targetSnapshot.socialCoverUrl
+          : targetSnapshot.socialCoverUrl === (oldMeta.coverUrl ?? ""))
 
       const restoredState: StudioState = backfillFromCurrentFetch
         ? {
@@ -571,14 +616,15 @@ export function StudioWorkspace() {
           ? { ...targetSnapshot, metadata: effectiveMetadata }
           : targetSnapshot
 
-      userOverrodeSocialAssetsRef.current.avatar = Boolean(
-        restoredState.socialAvatarUrl &&
-          restoredState.socialAvatarUrl !== effectiveMetadata?.avatarUrl
-      )
-      userOverrodeSocialAssetsRef.current.cover = Boolean(
-        restoredState.socialCoverUrl &&
-          restoredState.socialCoverUrl !== effectiveMetadata?.coverUrl
-      )
+      snapshotSocialOverridesRef.current.set(current, {
+        ...userOverrodeSocialAssetsRef.current,
+      })
+      userOverrodeSocialAssetsRef.current.avatar = avatarWasOverridden
+      userOverrodeSocialAssetsRef.current.cover = coverWasOverridden
+      snapshotSocialOverridesRef.current.set(restoredState, {
+        avatar: avatarWasOverridden,
+        cover: coverWasOverridden,
+      })
 
       currentUrlRef.current = restoredState.url
 
@@ -606,10 +652,11 @@ export function StudioWorkspace() {
     const previous = history.past[history.past.length - 1]!
     applyHistorySnapshot(previous, (current) => {
       setHistory((prev) =>
-        enforceCombinedHistoryLimits(prev.past.slice(0, -1), [
-          current,
-          ...prev.future,
-        ])
+        enforceCombinedHistoryLimits(
+          prev.past.slice(0, -1),
+          prev.future,
+          { incomingFuture: current }
+        )
       )
     })
   }, [history.past, applyHistorySnapshot])
@@ -620,8 +667,9 @@ export function StudioWorkspace() {
     applyHistorySnapshot(nextState, (current) => {
       setHistory((prev) =>
         enforceCombinedHistoryLimits(
-          [...prev.past, current],
-          prev.future.slice(1)
+          prev.past,
+          prev.future.slice(1),
+          { incomingPast: current }
         )
       )
     })
@@ -666,19 +714,24 @@ export function StudioWorkspace() {
           const preserveScreenshot =
             assetMutationTokenRef.current.screenshot !==
               startAssetTokens.screenshot || Boolean(prev.customScreenshotUrl)
+          const preserveMobileScreenshot =
+            assetMutationTokenRef.current.mobileScreenshot !==
+              startAssetTokens.mobileScreenshot ||
+            Boolean(prev.customMobileScreenshotUrl)
           const preserveAvatar =
             assetMutationTokenRef.current.avatar !== startAssetTokens.avatar ||
-            (userOverrodeSocialAssetsRef.current.avatar &&
-              Boolean(prev.socialAvatarUrl))
+            userOverrodeSocialAssetsRef.current.avatar
           const preserveCover =
             assetMutationTokenRef.current.cover !== startAssetTokens.cover ||
-            (userOverrodeSocialAssetsRef.current.cover &&
-              Boolean(prev.socialCoverUrl))
+            userOverrodeSocialAssetsRef.current.cover
           return {
             ...prev,
             metadata: data,
             customScreenshotUrl: preserveScreenshot
               ? prev.customScreenshotUrl
+              : "",
+            customMobileScreenshotUrl: preserveMobileScreenshot
+              ? prev.customMobileScreenshotUrl
               : "",
             socialPlatform: data.detectedPlatform,
             socialDisplayName: data.title || prev.socialDisplayName,
@@ -715,6 +768,7 @@ export function StudioWorkspace() {
                 s.gradientTo,
                 s.solidColor,
                 s.tabAccentColor,
+                s.bgDim,
               ].join("|")
 
             if (
@@ -750,7 +804,7 @@ export function StudioWorkspace() {
                   gradientTo: palette.gradientTo,
                   solidColor: palette.solidColor,
                   tabAccentColor: palette.tabAccentColor,
-                  bgDim: 20,
+                  ...(stateRef.current.bgDim === 0 ? { bgDim: 20 } : {}),
                 },
                 { forceHistoryStep: true }
               )
@@ -1032,7 +1086,7 @@ export function StudioWorkspace() {
   )
 
   const handleSaveCustomPreset = React.useCallback(
-    (rawName: string): boolean => {
+    (rawName: string): string | false => {
       const trimmed = rawName.trim().slice(0, 32)
       if (!trimmed) return false
       const current = stateRef.current
@@ -1051,7 +1105,7 @@ export function StudioWorkspace() {
       }
       setCustomPresets(presets)
       notify(`Saved "${trimmed}" to your presets`)
-      return true
+      return newPreset.id
     },
     [customPresets, notify]
   )
@@ -1201,6 +1255,8 @@ export function StudioWorkspace() {
       const resetToken = uploadResetTokenRef.current
       const startUrlRevision = urlRevisionRef.current
       const startUrl = stateRef.current.url.trim()
+      const startMode = stateRef.current.mode
+      const startIsTabLayout = stateRef.current.webLayout === "tab"
       const startAssetTokens = { ...assetMutationTokenRef.current }
       const startBgToken = bgOperationTokenRef.current
       const isCurrentPaste = () =>
@@ -1216,6 +1272,15 @@ export function StudioWorkspace() {
         }
         const dataUrl = reader.result
         const current = stateRef.current
+        if (current.mode !== startMode) {
+          return
+        }
+        if (
+          startMode === "web" &&
+          (current.webLayout === "tab") !== startIsTabLayout
+        ) {
+          return
+        }
 
         if (current.mode === "code") {
           if (bgOperationTokenRef.current !== startBgToken) {
@@ -1323,12 +1388,16 @@ export function StudioWorkspace() {
           const prevCover = current.socialCoverUrl
           const prevCoverWasOverride = userOverrodeSocialAssetsRef.current.cover
           updateState({ socialCoverUrl: dataUrl }, { forceHistoryStep: true })
+          const pasteAvatarToken = assetMutationTokenRef.current.avatar
+          const pasteCoverToken = assetMutationTokenRef.current.cover
           notify("Pasted image as social cover", {
             actionLabel: "Use as Avatar",
             onAction: () => {
               const latest = stateRef.current
               if (
                 !isCurrentPaste() ||
+                assetMutationTokenRef.current.avatar !== pasteAvatarToken ||
+                assetMutationTokenRef.current.cover !== pasteCoverToken ||
                 latest.mode !== "social" ||
                 latest.socialCoverUrl !== dataUrl
               ) {
@@ -1341,8 +1410,7 @@ export function StudioWorkspace() {
                 },
                 { forceHistoryStep: true }
               )
-              userOverrodeSocialAssetsRef.current.cover =
-                prevCoverWasOverride && Boolean(prevCover)
+              userOverrodeSocialAssetsRef.current.cover = prevCoverWasOverride
               notify("Applied pasted image as social avatar")
             },
           })

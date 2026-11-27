@@ -623,8 +623,16 @@ export function WebMockupCard({
   isFetching?: boolean
   previewGeneration?: number
 }) {
+  const failureScopeKey = `${previewGeneration}|${state.metadata?.fetchedAt ?? ""}|${state.url}`
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
-  const [failedUrls, setFailedUrls] = React.useState<string[]>([])
+  const [failedState, setFailedState] = React.useState<{
+    scopeKey: string
+    urls: string[]
+  }>({ scopeKey: failureScopeKey, urls: [] })
+  const failedUrls = React.useMemo(
+    () => (failedState.scopeKey === failureScopeKey ? failedState.urls : []),
+    [failedState, failureScopeKey]
+  )
   const [loadedIframeToken, setLoadedIframeToken] = React.useState<{
     key: string
   } | null>(null)
@@ -667,17 +675,20 @@ export function WebMockupCard({
     return `${raw}${sep}theme=${isDarkChrome ? "dark" : "light"}`
   }, [state.metadata?.screenshotUrl, isDarkChrome])
 
-  const themedMobileScreenshotUrl = React.useMemo(() => {
-    if (state.customMobileScreenshotUrl) return state.customMobileScreenshotUrl
+  const generatedMobileScreenshotUrl = React.useMemo(() => {
     const raw = state.metadata?.screenshotUrl
     if (!raw) return null
     const sep = raw.includes("?") ? "&" : "?"
     return `${raw}${sep}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
-  }, [
-    state.customMobileScreenshotUrl,
-    state.metadata?.screenshotUrl,
-    isDarkChrome,
-  ])
+  }, [state.metadata?.screenshotUrl, isDarkChrome])
+
+  const mobileCandidates = React.useMemo(
+    () =>
+      [state.customMobileScreenshotUrl, generatedMobileScreenshotUrl].filter(
+        (v): v is string => Boolean(v)
+      ),
+    [state.customMobileScreenshotUrl, generatedMobileScreenshotUrl]
+  )
 
   const candidates = React.useMemo(
     () =>
@@ -695,20 +706,23 @@ export function WebMockupCard({
 
   const activeImage = candidates.find((src) => !failedUrls.includes(src)) ?? ""
   const activeMobileImage =
-    (themedMobileScreenshotUrl &&
-    !failedUrls.includes(themedMobileScreenshotUrl)
-      ? themedMobileScreenshotUrl
-      : "") || activeImage
+    mobileCandidates.find((src) => !failedUrls.includes(src)) ?? activeImage
   const imageReady = Boolean(activeImage) && loadedSrc === activeImage
-  const currentIframeKey = liveIframeUrl
-    ? `${liveIframeUrl}:${previewGeneration}:${isDarkChrome ? "dark" : "light"}`
-    : ""
+  const isIframeMounted = Boolean(
+    liveIframeUrl &&
+      !state.customScreenshotUrl &&
+      state.webLayout !== "tab"
+  )
+  const currentIframeKey =
+    isIframeMounted && liveIframeUrl
+      ? `${liveIframeUrl}:${previewGeneration}:${isDarkChrome ? "dark" : "light"}`
+      : ""
   const iframeInstanceToken = React.useMemo(
-    () => ({ key: currentIframeKey }),
+    () => (currentIframeKey ? { key: currentIframeKey } : null),
     [currentIframeKey]
   )
   const iframeReady =
-    Boolean(currentIframeKey) && loadedIframeToken === iframeInstanceToken
+    Boolean(iframeInstanceToken) && loadedIframeToken === iframeInstanceToken
   const showLoadingHint =
     isFetching || (Boolean(activeImage) && !imageReady && !iframeReady)
 
@@ -718,9 +732,24 @@ export function WebMockupCard({
     Math.round(viewportSize.height / iframeScale)
   )
 
-  const markFailed = (src: string) => {
-    setFailedUrls((prev) => (prev.includes(src) ? prev : [...prev, src]))
-  }
+  const markFailed = React.useCallback(
+    (src: string) => {
+      setFailedState((prev) => {
+        const currentUrls =
+          prev.scopeKey === failureScopeKey ? prev.urls : []
+        if (currentUrls.includes(src)) {
+          return prev.scopeKey === failureScopeKey
+            ? prev
+            : { scopeKey: failureScopeKey, urls: currentUrls }
+        }
+        return {
+          scopeKey: failureScopeKey,
+          urls: [...currentUrls, src],
+        }
+      })
+    },
+    [failureScopeKey]
+  )
 
   const minDim = Math.min(logicalWidth, logicalHeight)
   const scaleFactor = minDim / 500

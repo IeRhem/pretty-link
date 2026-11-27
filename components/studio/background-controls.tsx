@@ -203,6 +203,7 @@ export function BackgroundControls({
     state.gradientTo,
     state.solidColor,
     state.tabAccentColor,
+    state.bgDim,
     state.backgroundImageUrl,
     state.unsplashPhotoId,
     state.metadata?.fetchedAt ?? "",
@@ -249,7 +250,7 @@ export function BackgroundControls({
         gradientTo: palette.gradientTo,
         solidColor: palette.solidColor,
         tabAccentColor: palette.tabAccentColor,
-        bgDim: 20,
+        ...(state.bgDim === 0 ? { bgDim: 20 } : {}),
       })
     } finally {
       setMatchingRequest((prev) =>

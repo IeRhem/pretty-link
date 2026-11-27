@@ -410,7 +410,7 @@ function hasChromaticPixels(
 ): boolean {
   for (const [r, g, b] of samples) {
     const [, s, l] = rgbToHsl(r, g, b)
-    if (l < 0.07 || l > 0.94) continue
+    if (l < 0.1 || l > 0.88) continue
     if (s >= 0.14) return true
   }
   return false

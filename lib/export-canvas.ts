@@ -2230,13 +2230,17 @@ async function drawWebMode(
     const mViewY = my + mHeaderH
     const mViewH = Math.max(20, mh - mHeaderH - mFooterH)
 
-    const mobileShotUrl =
-      state.customMobileScreenshotUrl ||
-      (state.metadata?.screenshotUrl
-        ? `${state.metadata.screenshotUrl}${state.metadata.screenshotUrl.includes("?") ? "&" : "?"}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
-        : null) ||
-      screenshotSrc
-    const mobileImg = (await loadImageSafe(mobileShotUrl)) ?? shotImg
+    const generatedMobileShotUrl = state.metadata?.screenshotUrl
+      ? `${state.metadata.screenshotUrl}${state.metadata.screenshotUrl.includes("?") ? "&" : "?"}theme=${isDarkChrome ? "dark" : "light"}&viewport=mobile`
+      : null
+    const mobileImg =
+      (state.customMobileScreenshotUrl
+        ? await loadImageSafe(state.customMobileScreenshotUrl)
+        : null) ??
+      (generatedMobileShotUrl
+        ? await loadImageSafe(generatedMobileShotUrl)
+        : null) ??
+      shotImg
     if (mobileImg) {
       drawCoverImage(ctx, mobileImg, mx, mViewY, mw, mViewH, true)
     } else {
@@ -2900,14 +2904,37 @@ function drawCodeMode(
     const entries = parseChangelogItems(state.changelogItems)
     const cardW = Math.round(Math.min(width * 0.86 * userScale, 440 * scaleFactor))
     const pad = Math.round(20 * scaleFactor)
-    const rowH = Math.round(32 * scaleFactor)
+    const minRowH = Math.round(32 * scaleFactor)
+    const rowPadY = Math.round(7 * scaleFactor)
+    const textLineH = Math.round(16 * scaleFactor)
     const rowGap = Math.round(8 * scaleFactor)
     const headerH = Math.round(74 * scaleFactor)
+
+    const entryLayouts = entries.map((entry) => {
+      ctx.font = `700 ${Math.round(9 * scaleFactor)}px ${monoFont}`
+      const tagW = Math.round(ctx.measureText(entry.tag).width + 12 * scaleFactor)
+      const tagXOffset = pad + Math.round(10 * scaleFactor)
+      const textXOffset = tagXOffset + tagW + Math.round(10 * scaleFactor)
+      const maxTextW = Math.max(
+        40,
+        cardW - pad - Math.round(10 * scaleFactor) - textXOffset
+      )
+      ctx.font = `500 ${Math.round(11.5 * scaleFactor)}px ${sansFont}`
+      const lines = wrapLines(ctx, entry.text, maxTextW, Number.POSITIVE_INFINITY)
+      const safeLines = lines.length > 0 ? lines : [entry.text]
+      const rowH = Math.max(
+        minRowH,
+        safeLines.length * textLineH + rowPadY * 2
+      )
+      return { entry, tagW, lines: safeLines, rowH }
+    })
+
+    const totalRowsH = entryLayouts.reduce((sum, item) => sum + item.rowH, 0)
     const cardH =
       pad +
       headerH +
-      entries.length * rowH +
-      Math.max(0, entries.length - 1) * rowGap +
+      totalRowsH +
+      Math.max(0, entryLayouts.length - 1) * rowGap +
       pad
     const cx = Math.round((width - cardW) / 2 + offX)
     const cy = Math.round((height - cardH) / 2 + offY)
@@ -2965,32 +2992,37 @@ function drawCodeMode(
     ctx.fillText(titleText, cx + pad, cy + pad + verH + Math.round(12 * scaleFactor))
 
     let rowY = cy + pad + headerH
-    entries.forEach((entry) => {
+    entryLayouts.forEach(({ entry, tagW, lines, rowH }) => {
       roundedRectPath(ctx, cx + pad, rowY, cardW - pad * 2, rowH, Math.round(11 * scaleFactor))
       ctx.fillStyle = isDark ? "rgba(255,255,255,0.04)" : "rgba(24,24,27,0.05)"
       ctx.fill()
 
       ctx.font = `700 ${Math.round(9 * scaleFactor)}px ${monoFont}`
-      const tagW = Math.round(ctx.measureText(entry.tag).width + 12 * scaleFactor)
       const tagH = Math.round(18 * scaleFactor)
       const tagX = cx + pad + Math.round(10 * scaleFactor)
-      const tagY = rowY + (rowH - tagH) / 2
+      const tagY =
+        lines.length === 1
+          ? rowY + (rowH - tagH) / 2
+          : rowY + rowPadY + Math.max(0, (textLineH - tagH) / 2)
       roundedRectPath(ctx, tagX, tagY, tagW, tagH, Math.round(5 * scaleFactor))
       ctx.fillStyle = entry.bg
       ctx.fill()
       ctx.fillStyle = entry.color
       ctx.textBaseline = "middle"
-      ctx.fillText(entry.tag, tagX + Math.round(6 * scaleFactor), rowY + rowH / 2 + 0.5)
+      ctx.fillText(
+        entry.tag,
+        tagX + Math.round(6 * scaleFactor),
+        tagY + tagH / 2 + 0.5
+      )
 
       ctx.font = `500 ${Math.round(11.5 * scaleFactor)}px ${sansFont}`
       ctx.fillStyle = isDark ? "rgba(250,250,250,0.9)" : "rgba(9,9,11,0.9)"
       const textX = tagX + tagW + Math.round(10 * scaleFactor)
-      const maxTextW = Math.max(40, cx + cardW - pad - Math.round(10 * scaleFactor) - textX)
-      ctx.fillText(
-        truncateTextWithEllipsis(ctx, entry.text, maxTextW),
-        textX,
-        rowY + rowH / 2 + 0.5
-      )
+      const blockH = lines.length * textLineH
+      const startTextY = rowY + (rowH - blockH) / 2 + textLineH / 2
+      lines.forEach((line, lineIdx) => {
+        ctx.fillText(line, textX, startTextY + lineIdx * textLineH + 0.5)
+      })
       rowY += rowH + rowGap
     })
 
@@ -3008,7 +3040,82 @@ function drawCodeMode(
   const footerH = Math.round(26 * scaleFactor)
   const pad = Math.round(16 * scaleFactor)
   const lineH = Math.round(19 * scaleFactor)
-  const bodyH = pad * 2 + Math.max(1, codeLines.length) * lineH
+  const lineNumW = state.codeShowLineNumbers ? Math.round(26 * scaleFactor) : 0
+  const maxCodeLineW = Math.max(60, cardW - pad * 2 - lineNumW)
+
+  ctx.font = `400 ${Math.round(11.5 * scaleFactor)}px ${monoFont}`
+  type VisualCodeSegment = { text: string; color: string }
+  type VisualCodeRow = {
+    lineNumber: number | null
+    segments: VisualCodeSegment[]
+  }
+  const visualRows: VisualCodeRow[] = []
+
+  codeLines.forEach((line, idx) => {
+    const tokens = tokenizeCodeLine(line)
+    let currentSegments: VisualCodeSegment[] = []
+    let currentW = 0
+    let isFirstVisualRow = true
+
+    const flushRow = () => {
+      visualRows.push({
+        lineNumber: isFirstVisualRow ? idx + 1 : null,
+        segments: currentSegments,
+      })
+      currentSegments = []
+      currentW = 0
+      isFirstVisualRow = false
+    }
+
+    for (const tok of tokens) {
+      const color = getTokenColor(tok.kind, isDark)
+      let remaining = tok.text
+      while (remaining.length > 0) {
+        const fullW = ctx.measureText(remaining).width
+        if (currentW + fullW <= maxCodeLineW) {
+          currentSegments.push({ text: remaining, color })
+          currentW += fullW
+          break
+        }
+        if (currentW > 0 && fullW <= maxCodeLineW) {
+          flushRow()
+          continue
+        }
+        // Slice as many characters as fit on the current visual line
+        let fitCount = 0
+        for (let c = 1; c <= remaining.length; c++) {
+          if (
+            currentW + ctx.measureText(remaining.slice(0, c)).width <=
+            maxCodeLineW
+          ) {
+            fitCount = c
+          } else {
+            break
+          }
+        }
+        if (fitCount === 0) {
+          if (currentW > 0) {
+            flushRow()
+            continue
+          }
+          fitCount = 1
+        }
+        const chunk = remaining.slice(0, fitCount)
+        currentSegments.push({ text: chunk, color })
+        remaining = remaining.slice(fitCount)
+        if (remaining.length > 0) {
+          flushRow()
+        } else {
+          currentW += ctx.measureText(chunk).width
+        }
+      }
+    }
+    if (currentSegments.length > 0 || isFirstVisualRow) {
+      flushRow()
+    }
+  })
+
+  const bodyH = pad * 2 + Math.max(1, visualRows.length) * lineH
   const cardH = headerH + bodyH + footerH
   const cx = Math.round((width - cardW) / 2 + offX)
   const cy = Math.round((height - cardH) / 2 + offY)
@@ -3061,20 +3168,22 @@ function drawCodeMode(
   ctx.textAlign = "left"
 
   ctx.font = `400 ${Math.round(11.5 * scaleFactor)}px ${monoFont}`
-  codeLines.forEach((line, idx) => {
-    const lineY = cy + headerH + pad + idx * lineH + lineH / 2
+  visualRows.forEach((row, rowIdx) => {
+    const lineY = cy + headerH + pad + rowIdx * lineH + lineH / 2
     let cursorX = cx + pad
     if (state.codeShowLineNumbers) {
-      ctx.fillStyle = isDark ? "rgba(244,244,245,0.32)" : "rgba(24,24,27,0.35)"
-      ctx.fillText(String(idx + 1), cursorX, lineY)
-      cursorX += Math.round(26 * scaleFactor)
+      if (row.lineNumber !== null) {
+        ctx.fillStyle = isDark
+          ? "rgba(244,244,245,0.32)"
+          : "rgba(24,24,27,0.35)"
+        ctx.fillText(String(row.lineNumber), cursorX, lineY)
+      }
+      cursorX += lineNumW
     }
-    const tokens = tokenizeCodeLine(line)
-    for (const tok of tokens) {
-      if (cursorX > cx + cardW - pad) break
-      ctx.fillStyle = getTokenColor(tok.kind, isDark)
-      ctx.fillText(tok.text, cursorX, lineY)
-      cursorX += ctx.measureText(tok.text).width
+    for (const seg of row.segments) {
+      ctx.fillStyle = seg.color
+      ctx.fillText(seg.text, cursorX, lineY)
+      cursorX += ctx.measureText(seg.text).width
     }
   })
 
@@ -3178,7 +3287,6 @@ export async function renderStudioToCanvas(
 
   if (state.mode === "web") {
     await drawWebMode(ctx, state, logicalW, logicalH, faviconImg)
-    drawWebQrBadge(ctx, state, logicalW, logicalH)
   } else if (state.mode === "social") {
     await drawSocialMode(ctx, state, logicalW, logicalH)
   } else {
@@ -3186,6 +3294,9 @@ export async function renderStudioToCanvas(
   }
   ctx.restore()
 
+  if (state.mode === "web") {
+    drawWebQrBadge(ctx, state, logicalW, logicalH)
+  }
   drawCalloutBadge(ctx, state, logicalW, logicalH)
   drawSpotlightOverlay(ctx, state, logicalW, logicalH)
 

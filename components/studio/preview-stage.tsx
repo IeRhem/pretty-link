@@ -94,7 +94,7 @@ export function PreviewStage({
   onRedo?: () => void
   customPresets?: CustomPreset[]
   onApplyCustomPreset?: (preset: CustomPreset) => void
-  onSaveCustomPreset?: (name: string) => boolean | void
+  onSaveCustomPreset?: (name: string) => string | boolean | void
   onDeleteCustomPreset?: (id: string) => void
   onDropImage: (dataUrl: string) => void
   onChange?: (
@@ -108,6 +108,9 @@ export function PreviewStage({
   const [sharedCopied, setSharedCopied] = React.useState(false)
   const [savingPreset, setSavingPreset] = React.useState(false)
   const [presetName, setPresetName] = React.useState("")
+  const [appliedPresetId, setAppliedPresetId] = React.useState<string | null>(
+    null
+  )
   const presetInputRef = React.useRef<HTMLInputElement>(null)
   const presetsTriggerRef = React.useRef<HTMLButtonElement>(null)
   const dropTokenRef = React.useRef(0)
@@ -158,6 +161,9 @@ export function PreviewStage({
     if (!trimmed) return
     const saved = onSaveCustomPreset?.(trimmed)
     if (saved === false) return
+    if (typeof saved === "string" && saved) {
+      setAppliedPresetId(saved)
+    }
     closeSavePresetForm()
   }
 
@@ -266,9 +272,25 @@ export function PreviewStage({
     state.mode === tpl.mode &&
     doesPatchMatchState(tpl.patch, { isQuickTemplate: true })
 
-  const activeCustomPreset = customPresets.find(isCustomPresetActive) ?? null
-  const activeTemplate = QUICK_TEMPLATES.find(isTemplateActive) ?? null
-  const activePresetDisplay = activeCustomPreset ?? activeTemplate
+  const preferredCustomPreset = appliedPresetId
+    ? (customPresets.find(
+        (p) => p.id === appliedPresetId && isCustomPresetActive(p)
+      ) ?? null)
+    : null
+  const preferredTemplate = appliedPresetId
+    ? (QUICK_TEMPLATES.find(
+        (t) => t.id === appliedPresetId && isTemplateActive(t)
+      ) ?? null)
+    : null
+  const activeCustomPreset =
+    preferredCustomPreset ?? customPresets.find(isCustomPresetActive) ?? null
+  const activeTemplate =
+    preferredTemplate ?? QUICK_TEMPLATES.find(isTemplateActive) ?? null
+  const activePresetDisplay =
+    preferredCustomPreset ??
+    preferredTemplate ??
+    activeCustomPreset ??
+    activeTemplate
 
   const handleShareClick = () => {
     onShareLink()
@@ -612,7 +634,10 @@ export function PreviewStage({
                     key={tpl.id}
                     value={tpl.id}
                     closeOnClick
-                    onClick={() => onApplyTemplate(tpl.patch)}
+                    onClick={() => {
+                      setAppliedPresetId(tpl.id)
+                      onApplyTemplate(tpl.patch)
+                    }}
                     className="min-h-9 [@media(pointer:coarse)]:min-h-11"
                   >
                     <span className="flex w-4 shrink-0 items-center justify-center text-primary">
@@ -645,7 +670,10 @@ export function PreviewStage({
                         <DropdownMenuRadioItem
                           value={preset.id}
                           closeOnClick
-                          onClick={() => onApplyCustomPreset?.(preset)}
+                          onClick={() => {
+                            setAppliedPresetId(preset.id)
+                            onApplyCustomPreset?.(preset)
+                          }}
                           className="min-h-9 flex-1 [@media(pointer:coarse)]:min-h-11"
                         >
                           <span className="flex w-4 shrink-0 items-center justify-center text-primary">
